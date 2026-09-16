@@ -1,0 +1,27 @@
+<Application x:Class="ERCTelemetry.App.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:ERCTelemetry.App.Dashboard"
+             StartupUri="Dashboard/MainWindow.xaml"
+             DispatcherUnhandledException="App_DispatcherUnhandledException">
+    <Application.Resources>
+        <!-- Dark is the only theme (erdi-erc.de look); ThemeManager re-inserts
+             Themes/Dark.xaml at index 0 during OnStartup (kept for the swap machinery,
+             which is now a no-op restatement). -->
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <!-- Broadcast.xaml BasedOns the implicit styles in Inputs/Chrome, so
+                     those two must merge first. The theme (re-inserted at index 0 by
+                     ThemeManager) only carries brushes/fonts, consumed via DynamicResource. -->
+                <ResourceDictionary Source="Themes/Inputs.xaml" />
+                <ResourceDictionary Source="Themes/Chrome.xaml" />
+                <ResourceDictionary Source="Themes/Broadcast.xaml" />
+                <ResourceDictionary Source="Themes/Dark.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+            <!-- Global converters: a UserControl (e.g. SessionDetailView) resolves
+                 StaticResources only against Application resources + its own, NOT
+                 against MainWindow's Window.Resources. -->
+            <local:InverseBoolConverter x:Key="InverseBool" />
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

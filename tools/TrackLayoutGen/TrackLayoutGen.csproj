@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Offline generator for the embedded track-centerline data. Deliberately NOT part
+       of ERCTelemetry.slnx — the production build never compiles it; run manually:
+       dotnet run (with the tools/TrackLayoutGen project path). -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+</Project>

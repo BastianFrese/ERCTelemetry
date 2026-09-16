@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ERCTelemetry — Commentary overlay</title>
+<link rel="stylesheet" href="overlay.css">
+<style>
+  /* Page-local: stacked broadcast-assistant blocks. */
+  .row { display: flex; gap: 10px; align-items: flex-start; flex-wrap: wrap; }
+  .widget { width: 360px; }
+  .widget.wide { width: 640px; }
+  .big {
+    font-family: 'Orbitron', 'Bahnschrift SemiBold Condensed', 'Bahnschrift', sans-serif;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    font-size: 20px; font-weight: 700;
+  }
+  .mini { font-size: 13px; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .chip {
+    display: inline-block; text-align: center;
+    font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 10px;
+  }
+  .chip-up   { background: #1f7a3d; color: #fff; }
+  .chip-down { background: #8a1f1f; color: #fff; }
+  .battle { color: var(--overlay-tyre-medium); font-weight: 700; }
+  .muted { color: var(--overlay-muted); }
+  .mono  { font-family: var(--overlay-mono); }
+  .spacer { flex: 1; }
+  .empty { color: var(--overlay-muted); font-style: italic; font-size: 12px; }
+  .meta-row { margin-top: 4px; }
+  /* marshal-zone flag chips (only active zones are listed) */
+  .flag-chip {
+    display: inline-block; font-size: 11px; font-weight: 700;
+    padding: 1px 7px; border-radius: 10px; margin: 0 6px 4px 0;
+    color: #0c0e14;
+  }
+  .flag-green  { background: var(--overlay-throttle); }
+  .flag-blue   { background: var(--overlay-ers); }
+  .flag-yellow { background: var(--overlay-tyre-medium); }
+</style>
+</head>
+<body>
+  <!-- big lap/session header -->
+  <div class="widget wide" id="header">
+    <div class="widget-title"><span id="h-session">Waiting for telemetry…</span></div>
+    <div class="row">
+      <span class="big" id="h-lap">–</span>
+      <span class="big" id="h-clock">–</span>
+      <span class="spacer"></span>
+      <span id="h-cond" class="muted">–</span>
+    </div>
+    <div class="mini muted meta-row" id="h-meta">–</div>
+  </div>
+
+  <!-- battles: cars under 1s apart -->
+  <div class="widget" id="battles-widget">
+    <div class="widget-title"><span>Battles — under 1s</span></div>
+    <div id="battles"><div class="empty">no battles right now</div></div>
+  </div>
+
+  <!-- biggest movers: position vs grid -->
+  <div class="widget" id="movers-widget">
+    <div class="widget-title"><span>Movers — vs grid</span></div>
+    <div id="movers"><div class="empty">no grid deltas yet</div></div>
+  </div>
+
+  <!-- fastest lap -->
+  <div class="widget" id="fl-widget">
+    <div class="widget-title"><span>Fastest laps</span></div>
+    <div id="fastest"><div class="empty">no laps completed</div></div>
+  </div>
+
+  <!-- pits + trouble -->
+  <div class="widget" id="pits-widget">
+    <div class="widget-title"><span>Pits &amp; trouble</span></div>
+    <div id="pits"><div class="empty">all quiet</div></div>
+  </div>
+
+  <!-- tyre-age ranking -->
+  <div class="widget" id="tyres-widget">
+    <div class="widget-title"><span>Oldest tyres</span></div>
+    <div id="tyres"><div class="empty">no tyre data</div></div>
+  </div>
+
+  <!-- marshal zones with an active flag -->
+  <div class="widget" id="flags-widget">
+    <div class="widget-title"><span>Flags</span></div>
+    <div id="flags"><div class="empty">no flags out</div></div>
+  </div>
+
+  <!-- current weather + full forecast -->
+  <div class="widget" id="weather-widget">
+    <div class="widget-title"><span>Weather</span></div>
+    <div class="mini" id="w-now">–</div>
+    <div class="forecast" id="w-forecast"></div>
+  </div>
+
+  <noscript>JavaScript required for the live overlay.</noscript>
+
+  <script src="overlay.js"></script>
+  <script>
+    (function () {
+      'use strict';
+      var fmt = window.overlayFormat;
+      var $ = function (id) { return document.getElementById(id); };
+
+      // block visibility — config keys per widget id; missing keys mean visible
+      var BLOCK_KEYS = {
+        'header': 'com.session',
+        'battles-widget': 'com.battles',
+        'movers-widget': 'com.movers',
+        'fl-widget': 'com.fastest',
+        'pits-widget': 'com.pits',
+        'tyres-widget': 'com.tyres',
+        'flags-widget': 'com.flags',
+        'weather-widget': 'com.weather',
+      };
+      var dataVisible = { 'flags-widget': true };
+
+      function updateBlocks() {
+        var cfg = window.overlayBlocks || {};
+        Object.keys(BLOCK_KEYS).forEach(function (id) {
+          var el = document.getElementById(id);
+          if (!el) return;
+          var cfgOn = cfg[BLOCK_KEYS[id]] === undefined ? true : !!cfg[BLOCK_KEYS[id]];
+          el.hidden = !cfgOn || dataVisible[id] === false;
+        });
+      }
+
+      function lapTime(ms) { return fmt.lapTime(ms); }
+      function tyreText(c) { return c.replace(/^F1C/, 'C').replace(/^F1/, ''); }
+      function outRow(r) {
+        return r.resultStatus === 'Retired' || r.resultStatus === 'DidNotFinish';
+      }
+      function set(list, id, emptyText) {
+        var box = $(id);
+        if (!list.length) {
+          box.innerHTML = '<div class="empty">' + emptyText + '</div>';
+          return;
+        }
+        box.textContent = '';
+        list.forEach(function (item) { box.appendChild(item); });
+      }
+
+      function clock(sec) {
+        sec = Math.max(sec, 0);
+        return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0');
+      }
+
+      var leaderLap = 1;
+
+      function renderHeader(s) {
+        if (!s) return;
+        $('h-session').textContent = s.sessionType + ' · ' + s.track;
+        $('h-lap').textContent = s.totalLaps > 0 ? 'LAP ' + leaderLap + '/' + s.totalLaps : '–';
+        $('h-clock').textContent = clock(s.sessionTimeLeft);
+        var cond = s.weather + ' · ' + s.trackTemperature + '°T / ' + s.airTemperature + '°A';
+        if (s.forecast && s.forecast.length) {
+          var rain = s.forecast.find(function (f) { return f.rainPercent > 0; });
+          if (rain) {
+            cond += ' · rain ' + rain.rainPercent + '% in ~' + rain.timeOffsetMinutes + 'm';
+          }
+        }
+        $('h-cond').textContent = cond;
+        var meta = s.gameMode || '–';
+        if (s.totalLaps > 0) {
+          meta += ' · ' + s.totalLaps + ' laps';
+        }
+        $('h-meta').textContent = meta;
+      }
+
+      // ---- marshal zones: only zones with an active flag are listed ----
+      function flagClass(flag) {
+        if (flag === 1) return 'flag-green';   // Green
+        if (flag === 2) return 'flag-blue';    // Blue
+        if (flag === 3) return 'flag-yellow';  // Yellow
+        return null;                            // None / Unknown
+      }
+
+      function renderFlags(s) {
+        var zones = (s && s.marshalZones) || [];
+        var box = $('flags');
+        box.textContent = '';
+        var shown = 0;
+        zones.forEach(function (zone, i) {
+          var cls = flagClass(zone.flag);
+          if (!cls) return;
+          var chip = document.createElement('span');
+          chip.className = 'flag-chip ' + cls;
+          chip.textContent = 'Zone ' + (i + 1);
+          box.appendChild(chip);
+          shown++;
+        });
+        if (!shown) {
+          var empty = document.createElement('div');
+          empty.className = 'empty';
+          empty.textContent = 'no flags out';
+          box.appendChild(empty);
+        }
+        dataVisible['flags-widget'] = shown > 0;
+      }
+
+      // ---- current conditions + full forecast lookahead ----
+      function renderWeather(s) {
+        if (!s) return;
+        $('w-now').textContent = s.weather + ' · ' + s.trackTemperature + '°T / ' +
+          s.airTemperature + '°A';
+        var list = $('w-forecast');
+        list.textContent = '';
+        (s.forecast || []).forEach(function (f) {
+          var el = document.createElement('span');
+          el.className = 'sample' + (f.rainPercent >= 50 ? ' rainy' : '');
+          el.textContent = '+' + f.timeOffsetMinutes + 'm ' + f.weather + ' ' +
+            f.rainPercent + '%';
+          list.appendChild(el);
+        });
+        if (!(s.forecast || []).length) {
+          var empty = document.createElement('div');
+          empty.className = 'empty';
+          empty.textContent = 'no forecast';
+          list.appendChild(empty);
+        }
+      }
+
+      function onState(msg) {
+        var s = msg.session;
+        var rows = (msg.standings || []).filter(function (r) { return !outRow(r); });
+        leaderLap = rows.length ? rows[0].currentLapNum : 1;
+
+        renderHeader(s);
+
+        // ---- battles: consecutive live rows under 1s apart
+        var battles = [];
+        for (var i = 1; i < rows.length; i++) {
+          var back = rows[i];
+          var front = rows[i - 1];
+          if (back.pitStatus === 'None' && front.pitStatus === 'None' &&
+              back.gapToCarInFrontMs > 0 && back.gapToCarInFrontMs < 1000) {
+            var el = document.createElement('div');
+            el.className = 'mini battle';
+            el.textContent = 'P' + front.position + ' ' + front.name +
+              '  vs  P' + back.position + ' ' + back.name +
+              '  ' + (back.gapToCarInFrontMs / 1000).toFixed(3) + 's';
+            battles.push(el);
+          }
+        }
+        set(battles, 'battles', 'no battles right now');
+
+        // ---- movers: position vs grid position (gridPosition 255 = unknown)
+        var movers = [];
+        rows.forEach(function (r) {
+          if (r.gridPosition === undefined || r.gridPosition >= 255) return;
+          var delta = r.gridPosition - r.position;
+          if (!delta) return;
+          var el = document.createElement('span');
+          el.className = 'chip ' + (delta > 0 ? 'chip-up' : 'chip-down');
+          el.textContent = (delta > 0 ? '+' : '') + delta + ' ' + r.name + ' P' + r.position;
+          el.style.margin = '0 6px 4px 0';
+          movers.push(el);
+        });
+        set(movers, 'movers', 'no grid deltas yet');
+
+        // ---- fastest laps: top 3 personal bests
+        var fastest = rows.filter(function (r) { return r.bestLapTimeMs > 0; })
+          .sort(function (a, b) { return a.bestLapTimeMs - b.bestLapTimeMs; })
+          .slice(0, 3);
+        var flItems = fastest.map(function (r, i) {
+          var el = document.createElement('div');
+          el.className = 'mini' + (i === 0 ? ' battle' : '');
+          el.textContent = (i === 0 ? 'FL  ' : '    ') + lapTime(r.bestLapTimeMs) + '  ' + r.name;
+          return el;
+        });
+        set(flItems, 'fastest', 'no laps completed');
+
+        // ---- pits + trouble (from all rows, including retired)
+        var feed = [];
+        rows.forEach(function (r) {
+          if (r.pitStatus === 'Pitting' || r.pitStatus === 'InPit') {
+            var pit = document.createElement('div');
+            pit.className = 'mini';
+            pit.textContent = 'PIT P' + r.position + ' ' + r.name +
+              ' · stop ' + (r.pitStops + 1) + ' · new ' + tyreText(r.tyreCompound) +
+              ' · age ' + r.tyreAgeLaps;
+            feed.push(pit);
+          }
+        });
+        (msg.standings || []).forEach(function (r) {
+          if (r.penalties > 0) {
+            var pen = document.createElement('div');
+            pen.className = 'mini';
+            pen.textContent = 'PEN +' + r.penalties + 's  ' + r.name;
+            feed.push(pen);
+          }
+          if (outRow(r)) {
+            var out = document.createElement('div');
+            out.className = 'mini';
+            out.textContent = 'OUT  ' + r.name + ' (was P' + r.position + ')';
+            feed.push(out);
+          }
+        });
+        set(feed, 'pits', 'all quiet');
+
+        // ---- oldest tyre stints
+        var tyres = rows.filter(function (r) { return r.tyreAgeLaps > 0; })
+          .sort(function (a, b) { return b.tyreAgeLaps - a.tyreAgeLaps; })
+          .slice(0, 3);
+        var tyreItems = tyres.map(function (r) {
+          var el = document.createElement('div');
+          el.className = 'mini';
+          el.textContent = r.tyreAgeLaps + ' laps · ' + tyreText(r.tyreCompound) + ' · ' + r.name;
+          return el;
+        });
+        set(tyreItems, 'tyres', 'no tyre data');
+
+        renderFlags(s);
+        renderWeather(s);
+        updateBlocks();
+      }
+
+      window.connectOverlay({
+        onState: onState,
+        onConfig: function () { updateBlocks(); },
+      });
+      updateBlocks();
+    })();
+  </script>
+</body>
+</html>

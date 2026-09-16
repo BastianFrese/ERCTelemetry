@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ERCTelemetry — Race Control overlay</title>
+<link rel="stylesheet" href="overlay.css">
+</head>
+<body>
+  <div class="widget" id="race-control">
+    <div class="widget-title">
+      <span id="session-title">Waiting for telemetry…</span>
+    </div>
+    <ul class="events" id="event-list"></ul>
+    <div class="empty" id="events-empty" style="display:none">no events yet</div>
+    <noscript>JavaScript required for the live overlay.</noscript>
+  </div>
+  <script src="overlay.js"></script>
+  <script>
+    (function () {
+      'use strict';
+      var $ = function (id) { return document.getElementById(id); };
+      var list = $('event-list');
+      var title = $('session-title');
+      var MAX_EVENTS = 20;
+
+      // block visibility — race control follows the app's flags/events toggle;
+      // missing keys mean visible. Events already survive reconnects: the list
+      // lives in the DOM and overlay.js reuses the page across socket retries.
+      var BLOCK_KEYS = { 'race-control': 'com.flags' };
+      function updateBlocks() {
+        var cfg = window.overlayBlocks || {};
+        Object.keys(BLOCK_KEYS).forEach(function (id) {
+          var el = document.getElementById(id);
+          if (!el) return;
+          var cfgOn = cfg[BLOCK_KEYS[id]] === undefined ? true : !!cfg[BLOCK_KEYS[id]];
+          el.hidden = !cfgOn;
+        });
+      }
+
+      function refreshEmpty() {
+        $('events-empty').style.display = list.children.length ? 'none' : 'block';
+      }
+
+      function typeLabel(ev) {
+        switch (ev.type) {
+          case 'fastest-lap': return 'FL';
+          case 'personal-best': return 'PB';
+          case 'retirement': return 'RET';
+          case 'penalty': return 'PEN';
+          case 'race-winner': return 'WIN';
+          case 'session-started': return 'GO';
+          case 'session-ended': return 'END';
+          case 'lap-completed': return 'LAP';
+          default: return '·';
+        }
+      }
+
+      window.connectOverlay({
+        onState: function (msg) {
+          updateBlocks();
+          if (msg.session) {
+            title.textContent = msg.session.sessionType + ' · ' + msg.session.track;
+          }
+        },
+        onConfig: function () { updateBlocks(); },
+        onEvent: function (msg) {
+          if (msg.type === 'lap-completed') {
+            return; // too chatty for the stream overlay; standings carry laps
+          }
+
+          var li = document.createElement('li');
+          li.className = 'event event-' + msg.type;
+          var time = new Date(msg.utc).toLocaleTimeString([], { hour12: false });
+
+          li.innerHTML =
+            '<span class="badge">' + typeLabel(msg) + '</span>' +
+            '<span class="text">' + msg.text + '</span>' +
+            '<span class="time">' + time + '</span>';
+          list.appendChild(li);
+
+          while (list.children.length > MAX_EVENTS) {
+            list.removeChild(list.firstChild);
+          }
+          refreshEmpty();
+        },
+      });
+      refreshEmpty(); // empty state until the first event arrives
+    })();
+  </script>
+</body>
+</html>

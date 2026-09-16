@@ -1,0 +1,319 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- Shell furniture (ScrollBar, Expander, DataGrid, ListBox, ContextMenu, ToolTip,
+         status lamp + pill) — theme-neutral: all colors via DynamicResource.
+         No Click attributes here: XAML Click inside a Style Setter.Value emits
+         broken BAML connect code (see MainWindow.xaml.cs AttachRowMenu). -->
+
+    <!-- Thin broadcast scrollbar: 8 px track-less bar with a rounded thumb. -->
+    <ControlTemplate x:Key="VerticalScrollBarTemplate" TargetType="ScrollBar">
+        <Grid Background="Transparent">
+            <Track x:Name="PART_Track" IsDirectionReversed="True">
+                <Track.DecreaseRepeatButton>
+                    <RepeatButton Command="ScrollBar.PageUpCommand" Opacity="0" Focusable="False" />
+                </Track.DecreaseRepeatButton>
+                <Track.IncreaseRepeatButton>
+                    <RepeatButton Command="ScrollBar.PageDownCommand" Opacity="0" Focusable="False" />
+                </Track.IncreaseRepeatButton>
+                <Track.Thumb>
+                    <Thumb>
+                        <Thumb.Template>
+                            <ControlTemplate TargetType="Thumb">
+                                <Border Background="{DynamicResource AppScrollbar}" CornerRadius="4" Margin="1" />
+                            </ControlTemplate>
+                        </Thumb.Template>
+                    </Thumb>
+                </Track.Thumb>
+            </Track>
+        </Grid>
+    </ControlTemplate>
+
+    <ControlTemplate x:Key="HorizontalScrollBarTemplate" TargetType="ScrollBar">
+        <Grid Background="Transparent">
+            <Track x:Name="PART_Track" IsDirectionReversed="False">
+                <Track.DecreaseRepeatButton>
+                    <RepeatButton Command="ScrollBar.PageLeftCommand" Opacity="0" Focusable="False" />
+                </Track.DecreaseRepeatButton>
+                <Track.IncreaseRepeatButton>
+                    <RepeatButton Command="ScrollBar.PageRightCommand" Opacity="0" Focusable="False" />
+                </Track.IncreaseRepeatButton>
+                <Track.Thumb>
+                    <Thumb>
+                        <Thumb.Template>
+                            <ControlTemplate TargetType="Thumb">
+                                <Border Background="{DynamicResource AppScrollbar}" CornerRadius="4" Margin="1" />
+                            </ControlTemplate>
+                        </Thumb.Template>
+                    </Thumb>
+                </Track.Thumb>
+            </Track>
+        </Grid>
+    </ControlTemplate>
+
+    <Style TargetType="ScrollBar">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Width" Value="8" />
+        <Setter Property="MinWidth" Value="8" />
+        <Setter Property="Template" Value="{StaticResource VerticalScrollBarTemplate}" />
+        <Style.Triggers>
+            <Trigger Property="Orientation" Value="Horizontal">
+                <Setter Property="Width" Value="Auto" />
+                <Setter Property="MinWidth" Value="0" />
+                <Setter Property="Height" Value="8" />
+                <Setter Property="MinHeight" Value="8" />
+                <Setter Property="Template" Value="{StaticResource HorizontalScrollBarTemplate}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- NOTE: no implicit TextBlock style here (deliberate). A Foreground setter on an
+         implicit TextBlock style beats INHERITED Foregrounds, which would flatten the
+         nav rail's muted/unselected labels and white-on-red button text. Bare text
+         blocks get explicit Foreground instead (see SessionDetailView.xaml). -->
+
+    <!-- Expander: Bahnschrift header + chevron, red underline while expanded.
+         Down-only by design — every expander in the app expands downward. -->
+    <Style TargetType="Expander">
+        <Setter Property="Foreground" Value="{DynamicResource AppForeground}" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Expander">
+                    <StackPanel>
+                        <ToggleButton x:Name="HeaderSite" Focusable="False"
+                                      IsChecked="{Binding IsExpanded, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+                            <ToggleButton.Template>
+                                <ControlTemplate TargetType="ToggleButton">
+                                    <Border Background="Transparent" Padding="2,8">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition />
+                                                <RowDefinition Height="Auto" />
+                                            </Grid.RowDefinitions>
+                                            <ContentPresenter TextElement.FontFamily="{DynamicResource AppRacingFont}"
+                                                              TextElement.FontSize="15"
+                                                              TextElement.FontWeight="SemiBold"
+                                                              TextElement.Foreground="{DynamicResource AppForeground}"
+                                                              VerticalAlignment="Center" />
+                                            <Path x:Name="Chevron" Grid.Column="1" Data="M0,0 L4,4 L8,0"
+                                                  Stroke="{DynamicResource AppMutedForeground}" StrokeThickness="1.5"
+                                                  VerticalAlignment="Center" Margin="8,0,2,0"
+                                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
+                                            <Rectangle x:Name="Rule" Grid.Row="1" Grid.ColumnSpan="2" Height="2"
+                                                       Fill="{DynamicResource AppAccent}" Visibility="Collapsed" />
+                                        </Grid>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsChecked" Value="True">
+                                            <Setter TargetName="Rule" Property="Visibility" Value="Visible" />
+                                            <Setter TargetName="Chevron" Property="LayoutTransform">
+                                                <Setter.Value>
+                                                    <ScaleTransform ScaleX="1" ScaleY="-1" />
+                                                </Setter.Value>
+                                            </Setter>
+                                        </Trigger>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="Chevron" Property="Stroke" Value="{DynamicResource AppAccent}" />
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </ToggleButton.Template>
+                            <ContentPresenter Content="{TemplateBinding Header}" ContentTemplate="{TemplateBinding HeaderTemplate}"
+                                              ContentStringFormat="{TemplateBinding HeaderStringFormat}" />
+                        </ToggleButton>
+                        <ContentPresenter x:Name="ExpandSite" Visibility="Collapsed" />
+                    </StackPanel>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsExpanded" Value="True">
+                            <Setter TargetName="ExpandSite" Property="Visibility" Value="Visible" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.45" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- DataGrid row with a broadcast hover pass (player/selection highlights in the
+         consumer's own RowStyle take precedence — later triggers win). -->
+    <Style x:Key="BroadcastDataGridRow" TargetType="DataGridRow">
+        <Setter Property="SnapsToDevicePixels" Value="True" />
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource AppHover}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- DataGrid: broadcast table — 32 px zebra rows, no vertical gridlines, quiet header. -->
+    <Style TargetType="DataGrid">
+        <Setter Property="Background" Value="{DynamicResource AppBackground}" />
+        <Setter Property="Foreground" Value="{DynamicResource AppForeground}" />
+        <Setter Property="RowBackground" Value="{DynamicResource AppGridBackground}" />
+        <Setter Property="AlternatingRowBackground" Value="{DynamicResource AppSurfaceAlt}" />
+        <Setter Property="HorizontalGridLinesBrush" Value="{DynamicResource AppGridLines}" />
+        <Setter Property="VerticalGridLinesBrush" Value="Transparent" />
+        <Setter Property="GridLinesVisibility" Value="Horizontal" />
+        <Setter Property="BorderBrush" Value="{DynamicResource AppCardBorder}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="RowHeight" Value="32" />
+        <Setter Property="RowStyle" Value="{StaticResource BroadcastDataGridRow}" />
+        <Setter Property="HeadersVisibility" Value="Column" />
+        <Setter Property="RowHeaderWidth" Value="0" />
+        <Setter Property="EnableRowVirtualization" Value="True" />
+    </Style>
+
+    <Style TargetType="DataGridColumnHeader">
+        <Setter Property="Background" Value="{DynamicResource AppRail}" />
+        <Setter Property="Foreground" Value="{DynamicResource AppMutedForeground}" />
+        <Setter Property="FontFamily" Value="{DynamicResource AppRacingFont}" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="BorderBrush" Value="{DynamicResource AppAccent}" />
+        <Setter Property="BorderThickness" Value="0,0,0,2" />
+        <Setter Property="Padding" Value="8,6,8,4" />
+        <Setter Property="HorizontalContentAlignment" Value="Left" />
+    </Style>
+
+    <Style TargetType="DataGridCell">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Padding" Value="8,0" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="DataGridCell">
+                    <Border Background="{TemplateBinding Background}"
+                            Padding="{TemplateBinding Padding}"
+                            VerticalAlignment="Stretch">
+                        <ContentPresenter VerticalAlignment="Center" />
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+        <Style.Triggers>
+            <Trigger Property="IsSelected" Value="True">
+                <Setter Property="Background" Value="{DynamicResource AppRowHighlight}" />
+                <Setter Property="Foreground" Value="{DynamicResource AppForeground}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- ListBox (lists on tabs; the nav rail has its own NavRailListBox). -->
+    <Style TargetType="ListBox">
+        <Setter Property="Background" Value="{DynamicResource AppListBackground}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource AppCardBorder}" />
+        <Setter Property="Foreground" Value="{DynamicResource AppForeground}" />
+        <Setter Property="BorderThickness" Value="1" />
+    </Style>
+
+    <Style TargetType="ListBoxItem">
+        <Setter Property="Foreground" Value="{DynamicResource AppForeground}" />
+        <Setter Property="Padding" Value="10,6" />
+        <Setter Property="SnapsToDevicePixels" Value="True" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ListBoxItem">
+                    <Border x:Name="Bd" Background="Transparent" Padding="{TemplateBinding Padding}">
+                        <ContentPresenter />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource AppHover}" />
+                        </Trigger>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource AppCardHighlight}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Context menu (driver rename on standings rows) + tooltips. -->
+    <Style TargetType="ContextMenu">
+        <Setter Property="Background" Value="{DynamicResource AppSurface}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource AppCardBorder}" />
+        <Setter Property="Foreground" Value="{DynamicResource AppForeground}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ContextMenu">
+                    <Border Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1"
+                            CornerRadius="8" Padding="4">
+                        <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Cycle" />
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style TargetType="MenuItem">
+        <Setter Property="Foreground" Value="{DynamicResource AppForeground}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="MenuItem">
+                    <Border x:Name="Bd" Background="Transparent" Padding="12,6">
+                        <ContentPresenter ContentSource="Header" VerticalAlignment="Center"
+                                          RecognizesAccessKey="True" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsHighlighted" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource AppHover}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style TargetType="ToolTip">
+        <Setter Property="Background" Value="{DynamicResource AppSurface}" />
+        <Setter Property="Foreground" Value="{DynamicResource AppForeground}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource AppCardBorder}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ToolTip">
+                    <Border Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1"
+                            CornerRadius="8" Padding="10,6" MaxWidth="360">
+                        <ContentPresenter>
+                            <ContentPresenter.Resources>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="TextWrapping" Value="Wrap" />
+                                </Style>
+                            </ContentPresenter.Resources>
+                        </ContentPresenter>
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Status lamp: 9 px dot, off = critical red; consumers add the "on" DataTrigger
+         (each lamp binds a different property). -->
+    <Style x:Key="StatusLamp" TargetType="Ellipse">
+        <Setter Property="Width" Value="9" />
+        <Setter Property="Height" Value="9" />
+        <Setter Property="StrokeThickness" Value="0" />
+        <Setter Property="Fill" Value="{DynamicResource AppStatusCritical}" />
+    </Style>
+
+    <!-- Game-status pill (Border). "On" border color is set per-instance via DataTrigger. -->
+    <Style x:Key="StatusPill" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource AppSurfaceAlt}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource AppDivider}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="999" />
+        <Setter Property="Padding" Value="12,5" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+</ResourceDictionary>

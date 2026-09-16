@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ERCTelemetry — Standings overlay</title>
+<link rel="stylesheet" href="overlay.css">
+</head>
+<body>
+  <div class="widget" id="standings-widget">
+    <div class="widget-title">
+      <span id="session-title">Waiting for telemetry…</span>
+    </div>
+    <table class="standings">
+      <thead>
+        <tr>
+          <th>Pos</th><th>#</th><th>Driver</th><th>Lap</th>
+          <th>Last</th><th>Best</th><th>S1</th><th>S2</th><th>S3</th>
+          <th>Gap</th><th>Int</th><th>Tyre</th><th>Pen</th>
+        </tr>
+      </thead>
+      <tbody id="standings-body"></tbody>
+    </table>
+    <div class="forecast" id="forecast" hidden></div>
+    <noscript>JavaScript required for the live overlay.</noscript>
+  </div>
+  <script src="overlay.js"></script>
+  <script>
+    (function () {
+      'use strict';
+      var fmt = window.overlayFormat;
+      var body = document.getElementById('standings-body');
+      var title = document.getElementById('session-title');
+      var forecast = document.getElementById('forecast');
+
+      /** Sector time "28.456"; empty for a missing (0) time. */
+      function sec(ms) {
+        if (!ms) return '';
+        return (ms % 60000 / 1000).toFixed(3);
+      }
+
+      /** Gap to the car directly ahead; "+"-gapped like the leader gap. */
+      function interval(ms) {
+        if (ms === undefined || ms === null || ms <= 0) return '';
+        return '+' + (ms / 1000).toFixed(3);
+      }
+
+      /** Max 5 samples, "15m · Clear · 0% · 21°C"; rain > 50% highlighted. */
+      function renderForecast(samples) {
+        if (!samples || !samples.length) {
+          forecast.hidden = true;
+          return;
+        }
+        forecast.hidden = false;
+        forecast.textContent = '';
+        samples.slice(0, 5).forEach(function (s) {
+          var el = document.createElement('span');
+          el.className = 'sample' + (s.rainPercent > 50 ? ' rainy' : '');
+          el.textContent = s.timeOffsetMinutes + 'm · ' + s.weather +
+            ' · ' + s.rainPercent + '% · ' + s.trackTemp + '°C';
+        });
+      }
+
+      function tyreClass(c) {
+        // F1 soft = red, medium = yellow, hard = white, intermediates/wet = green/blue.
+        if (/C5|C4|SOFT/i.test(c)) return 'tyre-soft';
+        if (/C3|C2|MEDIUM/i.test(c)) return 'tyre-medium';
+        if (/C1|C0|HARD|DRY/i.test(c)) return 'tyre-hard';
+        if (/INTER/i.test(c)) return 'tyre-inter';
+        if (/WET/i.test(c)) return 'tyre-wet';
+        return 'tyre-unknown';
+      }
+
+      function sessionLabel(s) {
+        if (!s) return 'Waiting for telemetry…';
+        var laps = s.totalLaps > 0 ? s.totalLaps + ' laps'
+          : Math.floor(s.sessionTimeLeft / 60) + ':' + String(s.sessionTimeLeft % 60).padStart(2, '0');
+        return s.sessionType + ' · ' + s.track + ' · ' + laps +
+          ' · ' + s.trackTemperature + '°T / ' + s.airTemperature + '°A';
+      }
+
+      // block visibility — the forecast strip force-hides on the app's weather
+      // toggle (false); the standings table itself has no matching block key.
+      var BLOCK_KEYS = { 'forecast': 'com.weather' };
+      function updateBlocks() {
+        var cfg = window.overlayBlocks || {};
+        Object.keys(BLOCK_KEYS).forEach(function (id) {
+          var el = document.getElementById(id);
+          if (!el) return;
+          if (cfg[BLOCK_KEYS[id]] === false) {
+            el.hidden = true;
+          }
+        });
+      }
+
+      window.connectOverlay({
+        onConfig: function () { updateBlocks(); },
+        onState: function (msg) {
+          updateBlocks();
+          title.textContent = sessionLabel(msg.session);
+          renderForecast(msg.session && msg.session.forecast);
+          body.innerHTML = '';
+          msg.standings.forEach(function (row) {
+            var tr = document.createElement('tr');
+            if (row.isPlayer) tr.className = 'is-player';
+            if (row.resultStatus === 'Retired' || row.resultStatus === 'DidNotFinish') {
+              tr.className += (tr.className ? ' ' : '') + 'is-out';
+            }
+            tr.innerHTML =
+              '<td class="pos">' + row.position + '</td>' +
+              '<td class="num">' + row.raceNumber + '</td>' +
+              '<td class="name">' + row.name + (row.pitStatus === 'Pitting' ? ' <span class="pit">PIT</span>' : '') + '</td>' +
+              '<td class="lap">' + row.currentLapNum + '</td>' +
+              '<td class="mono">' + fmt.lapTime(row.lastLapTimeMs) + '</td>' +
+              '<td class="mono">' + fmt.lapTime(row.bestLapTimeMs) + '</td>' +
+              '<td class="mono sec">' + sec(row.sector1TimeMs) + '</td>' +
+              '<td class="mono sec">' + sec(row.sector2TimeMs) + '</td>' +
+              '<td class="mono sec">' + sec(row.sector3TimeMs) + '</td>' +
+              '<td class="mono gap">' + fmt.gap(row.gapToLeaderMs) + '</td>' +
+              '<td class="mono gap">' + interval(row.gapToCarInFrontMs) + '</td>' +
+              '<td><span class="tyre ' + tyreClass(row.tyreCompound) + '">' +
+                row.tyreCompound.replace(/^F1C/, 'C').replace(/^F1/, '') + ' · ' + row.tyreAgeLaps + '</span></td>' +
+              '<td class="pen">' + (row.penalties > 0 ? '+' + row.penalties : '') + '</td>';
+            body.appendChild(tr);
+          });
+        },
+      });
+    })();
+  </script>
+</body>
+</html>

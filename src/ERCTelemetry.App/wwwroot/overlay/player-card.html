@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ERCTelemetry — Player card overlay</title>
+<link rel="stylesheet" href="overlay.css">
+</head>
+<body>
+  <div class="widget player-widget" id="player-card">
+    <div class="widget-title">
+      <span id="player-name">Waiting for telemetry…</span>
+      <span class="drs" id="drs">DRS</span>
+    </div>
+
+    <div class="speed-row">
+      <span class="pos-label" id="pos">–</span>
+      <span class="speed" id="speed">–</span>
+      <span class="unit">km/h</span>
+      <span class="gear" id="gear">–</span>
+    </div>
+    <div class="rpm-bar"><div class="fill" id="rpm-bar"></div></div>
+    <div class="timing-row">
+      <span class="muted">lap</span> <b id="lap-num">–</b>
+      <span class="muted">·</span> <span class="mono" id="last-lap">–</span>
+      <span class="muted">best</span> <span class="mono" id="best-lap">–</span>
+      <span class="spacer"></span>
+      <span class="mono" id="gap">–</span>
+    </div>
+
+    <div class="pedals">
+      <div class="pedal-label">T</div>
+      <div class="pedal throttle"><div class="fill" id="throttle-bar"></div></div>
+      <span class="pedal-value" id="thr-pct">–</span>
+      <div class="pedal-label">B</div>
+      <div class="pedal brake"><div class="fill" id="brake-bar"></div></div>
+      <span class="pedal-value" id="brk-pct">–</span>
+      <div class="pedal-label">E</div>
+      <div class="pedal ers"><div class="fill" id="ers-bar"></div></div>
+      <span class="pedal-value" id="ers-pct">–</span>
+    </div>
+
+    <div class="meta-row">
+      <span class="tyre unknown" id="tyre">–</span>
+      <span>age <b id="tyre-age">–</b></span>
+      <span class="spacer"></span>
+      <span>fuel <b id="fuel-kg">–</b> kg</span>
+      <span class="spacer"></span>
+      <span><b id="fuel-laps">–</b> laps</span>
+      <span class="spacer"></span>
+      <span id="ers-mode">–</span>
+    </div>
+
+    <div class="rival-row">
+      <span class="muted">vs</span>
+      <span id="rival-name">–</span>
+      <span class="spacer"></span>
+      <span><b id="rival-speed">–</b> km/h</span>
+      <span class="spacer"></span>
+      <span>gear <b id="rival-gear">–</b></span>
+      <span class="spacer"></span>
+      <span class="mono"><b id="rival-best">–</b></span>
+    </div>
+  </div>
+  <script src="overlay.js"></script>
+  <script>
+    (function () {
+      'use strict';
+      var fmt = window.overlayFormat;
+      var $ = function (id) { return document.getElementById(id); };
+
+      function tyreText(c) {
+        return c.replace(/^F1C/, 'C').replace(/^F1/, '');
+      }
+
+      function tyreClass(c) {
+        if (/C5|C4|SOFT/i.test(c)) return 'tyre-soft';
+        if (/C3|C2|MEDIUM/i.test(c)) return 'tyre-medium';
+        if (/C1|C0|HARD|DRY/i.test(c)) return 'tyre-hard';
+        if (/INTER/i.test(c)) return 'tyre-inter';
+        if (/WET/i.test(c)) return 'tyre-wet';
+        return 'tyre-unknown';
+      }
+
+      var playerRow = null; // standings row of the shown car (5 Hz state)
+
+      function renderTiming(msg) {
+        var session = msg.session;
+        var rows = msg.standings || [];
+        var row = null;
+        for (var i = 0; i < rows.length; i++) {
+          if (rows[i].isPlayer) { row = rows[i]; break; }
+        }
+        playerRow = row;
+
+        var pos = $('pos');
+        pos.textContent = row ? 'P' + row.position : '–';
+        $('lap-num').textContent = row ? row.currentLapNum : '–';
+        $('last-lap').textContent = row ? (fmt.lapTime(row.lastLapTimeMs) || '–') : '–';
+        $('best-lap').textContent = row ? (fmt.lapTime(row.bestLapTimeMs) || '–') : '–';
+        $('gap').textContent = row ? fmt.gap(row.gapToLeaderMs) : '–';
+      }
+
+      function fill(frame) {
+        $('speed').textContent = frame.speed;
+        $('gear').textContent = frame.gear < 0 ? 'R' : String(frame.gear);
+        $('rpm-bar').style.width = fmt.pct(frame.engineRpm / 12000 * 100);
+        $('throttle-bar').style.height = fmt.pct(frame.throttle * 100);
+        $('brake-bar').style.height = fmt.pct(frame.brake * 100);
+        $('ers-bar').style.height = fmt.pct(frame.ersPercent);
+        $('thr-pct').textContent = Math.round(frame.throttle * 100) + '%';
+        $('brk-pct').textContent = Math.round(frame.brake * 100) + '%';
+        $('ers-pct').textContent = Math.round(frame.ersPercent) + '%';
+        $('ers-mode').textContent = 'ERS: ' + frame.ersDeployMode;
+        $('fuel-kg').textContent = frame.fuelInTank.toFixed(1);
+        $('fuel-laps').textContent = frame.fuelRemainingLaps.toFixed(1);
+
+        var tyre = $('tyre');
+        tyre.textContent = tyreText(frame.tyreCompound);
+        tyre.className = 'tyre ' + tyreClass(frame.tyreCompound);
+        $('tyre-age').textContent = frame.tyreAgeLaps;
+
+        document.body.classList.toggle('drs-on', frame.drsOn || frame.drsAllowed);
+      }
+
+      window.connectOverlay({
+        onState: renderTiming,
+        onPlayer: function (msg) {
+          if (!msg.player) {
+            $('player-name').textContent = 'Waiting for telemetry…';
+            return;
+          }
+          $('player-name').textContent = msg.player.name;
+          fill(msg.player);
+
+          var rival = msg.rival;
+          $('rival-name').textContent = rival ? rival.name : '–';
+          $('rival-speed').textContent = rival ? rival.speed : '–';
+          $('rival-gear').textContent = rival ? (rival.gear < 0 ? 'R' : rival.gear) : '–';
+          $('rival-best').textContent = rival ? tyreText(rival.tyreCompound) : '–';
+        },
+      });
+    })();
+  </script>
+</body>
+</html>

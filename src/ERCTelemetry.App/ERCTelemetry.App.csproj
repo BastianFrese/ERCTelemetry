@@ -1,0 +1,84 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <!-- Explicit platform identifier + version so the Windows SDK projections
+         (Windows.Graphics.Capture for HDR-correct screen capture) are referenced.
+         The identifier must be set too: the SDK's TargetFrameworkInference.targets
+         re-derives TargetPlatformVersion from the TFM when the identifier is empty,
+         which resets it to 7.0 and silently drops Microsoft.Windows.SDK.NET.Ref. -->
+    <TargetPlatformIdentifier>Windows</TargetPlatformIdentifier>
+    <TargetPlatformVersion>10.0.26100.0</TargetPlatformVersion>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms> <!-- tray icon (NotifyIcon) only -->
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>ERCTelemetry.App</RootNamespace>
+    <AssemblyName>ERCTelemetry</AssemblyName>
+    <ApplicationIcon>erc.ico</ApplicationIcon>
+    <Version>0.6.4.1</Version>
+    <LangVersion>latest</LangVersion>
+    <!-- GeneratedComInterface (HdrFrameSource's IGraphicsCaptureItemInterop) needs
+         unsafe code for the generated COM marshaling. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ERCTelemetry.Core\ERCTelemetry.Core.csproj" />
+  </ItemGroup>
+
+  <!-- Windows TTS for the voice alerts (Box-Box, Regen, Strafen, ...). Windows-only,
+       which is fine — the app targets net10.0-windows. The Neural voice comes from the
+       Edge-TTS websocket (Core/Tts); System.Speech is kept only as the offline fallback. -->
+  <ItemGroup>
+    <PackageReference Include="System.Speech" Version="10.0.11" />
+  </ItemGroup>
+
+  <!-- Edge-TTS returns MP3; NAudio plays it. NLayer is a pure-managed MP3 decoder, so
+       playback needs no external codecs or temp files. -->
+  <ItemGroup>
+    <PackageReference Include="NAudio" Version="3.1.0" />
+    <PackageReference Include="NLayer.NAudioSupport" Version="3.0.0" />
+  </ItemGroup>
+
+  <!-- UseWindowsForms pulls WPF-conflicting global usings in; only the NotifyIcon is used. -->
+  <ItemGroup>
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+
+  <!-- Overlay web server (Kestrel) lives in the WPF app; Core stays ASP.NET-free. -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="wwwroot\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- FFmpeg (gyan.dev essentials build, GPL) encodes collision clips to H.264 MP4.
+       Missing at runtime → clip recording is disabled with a settings warning. -->
+  <ItemGroup>
+    <Content Include="ffmpeg\ffmpeg.exe" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- Delta-update apply script: ships in the install dir, the app copies it to
+       %LOCALAPPDATA%\ERCTelemetry\update\ before launching it on exit. -->
+  <ItemGroup>
+    <Content Include="apply-update.ps1" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- Orbitron display font (OFL license in Fonts/OFL.txt) — embedded, not Content,
+       so pack://application resolves offline. Static TTFs only (WPF has no variable axes). -->
+  <ItemGroup>
+    <Resource Include="Fonts\**\*.ttf" />
+  </ItemGroup>
+
+  <!-- Track outline images (CC-BY-4.0, see Assets/Tracks/LICENSE.txt) — embedded as
+       resources so the session cards resolve them offline via pack://application. -->
+  <ItemGroup>
+    <Resource Include="Assets\Tracks\*.png" />
+  </ItemGroup>
+
+</Project>

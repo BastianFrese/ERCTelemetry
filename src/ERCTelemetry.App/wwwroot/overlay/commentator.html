@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>ERCTelemetry — AI-Kommentator</title>
+<link rel="stylesheet" href="overlay.css">
+<style>
+  /* Page-local: a scrolling feed of AI-commentator lines, newest on top. */
+  .feed { display: flex; flex-direction: column; gap: 4px; }
+  .line {
+    font-family: 'Orbitron', 'Bahnschrift SemiBold Condensed', 'Bahnschrift', sans-serif;
+    font-size: 15px; font-weight: 600; letter-spacing: 0.03em;
+    padding: 4px 8px; border-radius: 4px;
+    background: rgba(255, 255, 255, 0.05);
+    border-left: 3px solid var(--overlay-accent);
+    animation: fade-in 0.4s ease-out;
+  }
+  .line .when { color: var(--overlay-muted); font-size: 11px; margin-right: 8px; }
+  .empty { color: var(--overlay-muted); font-style: italic; font-size: 12px; }
+  @keyframes fade-in {
+    from { opacity: 0; transform: translateY(-6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+</style>
+</head>
+<body>
+  <div class="widget" id="commentator-widget">
+    <div class="widget-title"><span>AI-Kommentator</span></div>
+    <div class="feed" id="feed"><div class="empty">warte auf Telemetrie…</div></div>
+  </div>
+
+  <noscript>JavaScript required for the live overlay.</noscript>
+
+  <script src="overlay.js"></script>
+  <script>
+    (function () {
+      'use strict';
+      var MAX_LINES = 8;
+      var feed = document.getElementById('feed');
+
+      function addLine(text) {
+        var empty = feed.querySelector('.empty');
+        if (empty) empty.remove();
+
+        var el = document.createElement('div');
+        el.className = 'line';
+        var when = document.createElement('span');
+        when.className = 'when';
+        when.textContent = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+        el.appendChild(when);
+        el.appendChild(document.createTextNode(text));
+        feed.insertBefore(el, feed.firstChild);
+
+        while (feed.children.length > MAX_LINES) {
+          feed.removeChild(feed.lastChild);
+        }
+      }
+
+      window.connectOverlay({
+        onCommentary: function (msg) {
+          if (msg && msg.text) addLine(msg.text);
+        },
+      });
+    })();
+  </script>
+</body>
+</html>

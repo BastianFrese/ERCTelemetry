@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ERCTelemetry — Telemetry overlay</title>
+<link rel="stylesheet" href="overlay.css">
+<style>
+  /* Page-local: two driving panels side by side. */
+  .panels { display: flex; gap: 10px; align-items: flex-start; flex-wrap: wrap; }
+  .panels .widget { width: 320px; }
+  .stat-grid {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 2px 10px;
+    font-size: 13px;
+    margin-top: 8px;
+    font-variant-numeric: tabular-nums;
+  }
+  .stat-grid .k {
+    color: var(--overlay-muted);
+    text-transform: uppercase;
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    padding-top: 2px;
+  }
+</style>
+</head>
+<body>
+  <div class="widget" id="session-widget">
+    <div class="widget-title">
+      <span id="session-title">Waiting for telemetry…</span>
+      <span class="drs" id="drs">DRS</span>
+    </div>
+    <div class="muted" id="cond-row">–</div>
+    <div class="forecast" id="forecast" hidden></div>
+  </div>
+
+  <div class="panels">
+    <div class="widget" id="player-panel">
+      <div class="widget-title"><span id="player-name">Player</span></div>
+      <div class="speed-row">
+        <span class="pos-label" id="p-pos">–</span>
+        <span class="speed" id="p-speed">–</span>
+        <span class="unit">km/h</span>
+        <span class="gear" id="p-gear">–</span>
+      </div>
+      <div class="rpm-bar"><div class="fill" id="p-rpm-bar"></div></div>
+      <div class="timing-row">
+        <span class="muted">lap</span> <b id="p-lap">–</b>
+        <span class="muted">·</span> <span class="mono" id="p-last">–</span>
+        <span class="muted">best</span> <span class="mono" id="p-best">–</span>
+        <span class="spacer"></span>
+        <span class="mono" id="p-gap">–</span>
+      </div>
+      <div class="pedals">
+        <div class="pedal-label">T</div>
+        <div class="pedal throttle"><div class="fill" id="p-throttle-bar"></div></div>
+        <span class="pedal-value" id="p-thr-pct">–</span>
+        <div class="pedal-label">B</div>
+        <div class="pedal brake"><div class="fill" id="p-brake-bar"></div></div>
+        <span class="pedal-value" id="p-brk-pct">–</span>
+        <div class="pedal-label">E</div>
+        <div class="pedal ers"><div class="fill" id="p-ers-bar"></div></div>
+        <span class="pedal-value" id="p-ers-pct">–</span>
+      </div>
+      <div class="stat-grid">
+        <span class="k">ERS</span><span><b id="p-ers-mode">–</b></span>
+        <span class="k">Fuel</span><span><b id="p-fuel">–</b> kg · <b id="p-fuel-laps">–</b> laps left</span>
+        <span class="k">Tyres</span><span><span class="tyre unknown" id="p-tyre">–</span> age <b id="p-tyre-age">–</b></span>
+        <span class="k">Wear</span><span><b id="p-wear">–</b>% · damage <b id="p-damage">–</b>%</span>
+      </div>
+    </div>
+
+    <div class="widget" id="rival-panel">
+      <div class="widget-title"><span id="rival-name">Rival</span></div>
+      <div class="stat-grid">
+        <span class="k">Pos</span><span><b id="r-pos">–</b> <span class="mono" id="r-gap"></span></span>
+        <span class="k">Drive</span><span class="mono"><b id="r-speed">–</b> km/h · gear <b id="r-gear">–</b></span>
+        <span class="k">ERS</span><span class="mono"><b id="r-ers">–</b>% · <span id="r-ers-mode">–</span></span>
+        <span class="k">Tyres</span><span><span class="tyre unknown" id="r-tyre">–</span> age <b id="r-tyre-age">–</b></span>
+        <span class="k">Wear</span><span><b id="r-wear">–</b>% · damage <b id="r-damage">–</b>%</span>
+      </div>
+    </div>
+  </div>
+
+  <noscript>JavaScript required for the live overlay.</noscript>
+  <script src="overlay.js"></script>
+  <script>
+    (function () {
+      'use strict';
+      var fmt = window.overlayFormat;
+      var $ = function (id) { return document.getElementById(id); };
+
+      function tyreText(c) { return c.replace(/^F1C/, 'C').replace(/^F1/, ''); }
+      function tyreClass(c) {
+        if (/C5|C4|SOFT/i.test(c)) return 'tyre-soft';
+        if (/C3|C2|MEDIUM/i.test(c)) return 'tyre-medium';
+        if (/C1|C0|HARD|DRY/i.test(c)) return 'tyre-hard';
+        if (/INTER/i.test(c)) return 'tyre-inter';
+        if (/WET/i.test(c)) return 'tyre-wet';
+        return 'tyre-unknown';
+      }
+      function setTyre(el, compound) {
+        el.textContent = tyreText(compound);
+        el.className = 'tyre ' + tyreClass(compound);
+      }
+      function findPlayerRow(rows) {
+        for (var i = 0; i < rows.length; i++) {
+          if (rows[i].isPlayer) return rows[i];
+        }
+        return null;
+      }
+      function renderForecast(samples) {
+        var box = $('forecast');
+        if (!samples || !samples.length) { box.hidden = true; return; }
+        box.hidden = false;
+        box.textContent = '';
+        samples.slice(0, 5).forEach(function (s) {
+          var el = document.createElement('span');
+          el.className = 'sample' + (s.rainPercent > 50 ? ' rainy' : '');
+          el.textContent = s.timeOffsetMinutes + 'm · ' + s.weather +
+            ' · ' + s.rainPercent + '% · ' + s.trackTemp + '°C';
+          box.appendChild(el);
+        });
+      }
+
+      var playerRow = null;
+      var tyresByCar = {};   // carIndex → tyres[] entry (worst-wheel wear/damage)
+
+      function onState(msg) {
+        var s = msg.session;
+        if (s) {
+          $('session-title').textContent = s.sessionType + ' · ' + s.track;
+          $('cond-row').textContent = s.weather +
+            ' · air ' + s.airTemperature + '°C · track ' + s.trackTemperature + '°C';
+        }
+        renderForecast(s && s.forecast);
+
+        tyresByCar = {};
+        (msg.tyres || []).forEach(function (t) { tyresByCar[t.carIndex] = t; });
+
+        playerRow = findPlayerRow(msg.standings || []);
+        if (playerRow) {
+          $('p-pos').textContent = 'P' + playerRow.position;
+          $('p-lap').textContent = playerRow.currentLapNum;
+          $('p-last').textContent = fmt.lapTime(playerRow.lastLapTimeMs) || '–';
+          $('p-best').textContent = fmt.lapTime(playerRow.bestLapTimeMs) || '–';
+          $('p-gap').textContent = fmt.gap(playerRow.gapToLeaderMs);
+        }
+
+        var pt = playerRow ? tyresByCar[playerRow.carIndex] : null;
+        $('p-wear').textContent = pt ? Math.round(pt.wearPercent) : '–';
+        $('p-damage').textContent = pt ? Math.round(pt.damagePercent) : '–';
+      }
+
+      function onPlayer(msg) {
+        var p = msg.player;
+        $('player-name').textContent = p ? p.name : 'Player';
+        if (p) {
+          $('p-speed').textContent = p.speed;
+          $('p-gear').textContent = p.gear < 0 ? 'R' : String(p.gear);
+          $('p-rpm-bar').style.width = fmt.pct(p.engineRpm / 12000 * 100);
+          $('p-throttle-bar').style.height = fmt.pct(p.throttle * 100);
+          $('p-brake-bar').style.height = fmt.pct(p.brake * 100);
+          $('p-ers-bar').style.height = fmt.pct(p.ersPercent);
+          $('p-thr-pct').textContent = Math.round(p.throttle * 100) + '%';
+          $('p-brk-pct').textContent = Math.round(p.brake * 100) + '%';
+          $('p-ers-pct').textContent = Math.round(p.ersPercent) + '%';
+          $('p-ers-mode').textContent = p.ersDeployMode;
+          $('p-fuel').textContent = p.fuelInTank.toFixed(1);
+          $('p-fuel-laps').textContent = p.fuelRemainingLaps.toFixed(1);
+          setTyre($('p-tyre'), p.tyreCompound);
+          $('p-tyre-age').textContent = p.tyreAgeLaps;
+        }
+        document.body.classList.toggle('drs-on', !!(p && (p.drsOn || p.drsAllowed)));
+
+        var r = msg.rival;
+        $('rival-name').textContent = r ? r.name : 'Rival';
+        $('r-pos').textContent = r && playerRow
+          ? 'P' + findPlayerRowPosition(r.carIndex, msg) : '–';
+        $('r-gap').textContent = r ? rivalGap(r.carIndex) : '';
+        $('r-speed').textContent = r ? r.speed : '–';
+        $('r-gear').textContent = r ? (r.gear < 0 ? 'R' : r.gear) : '–';
+        $('r-ers').textContent = r ? Math.round(r.ersPercent) : '–';
+        $('r-ers-mode').textContent = r ? r.ersDeployMode : '–';
+        if (r) { setTyre($('r-tyre'), r.tyreCompound); }
+        $('r-tyre-age').textContent = r ? r.tyreAgeLaps : '–';
+        var rt = r ? tyresByCar[r.carIndex] : null;
+        $('r-wear').textContent = rt ? Math.round(rt.wearPercent) : '–';
+        $('r-damage').textContent = rt ? Math.round(rt.damagePercent) : '–';
+      }
+
+      /** Standings row of a car index — rival timing comes from the 5 Hz state. */
+      function rowOf(carIndex) {
+        var rows = playerRow ? msg_standings : [];
+        for (var i = 0; i < rows.length; i++) {
+          if (rows[i].carIndex === carIndex) return rows[i];
+        }
+        return null;
+      }
+      var msg_standings = [];
+      function findPlayerRowPosition(carIndex) {
+        var row = rowOf(carIndex);
+        return row ? 'P' + row.position : '–';
+      }
+      function rivalGap(carIndex) {
+        var row = rowOf(carIndex);
+        return row ? fmt.gap(row.gapToLeaderMs) : '';
+      }
+
+      // block visibility — the session strip follows the app's session toggle;
+      // the two telemetry panels have no matching block key and always show.
+      var BLOCK_KEYS = { 'session-widget': 'com.session' };
+      function updateBlocks() {
+        var cfg = window.overlayBlocks || {};
+        Object.keys(BLOCK_KEYS).forEach(function (id) {
+          var el = document.getElementById(id);
+          if (!el) return;
+          var cfgOn = cfg[BLOCK_KEYS[id]] === undefined ? true : !!cfg[BLOCK_KEYS[id]];
+          el.hidden = !cfgOn;
+        });
+      }
+
+      window.connectOverlay({
+        onConfig: function () { updateBlocks(); },
+        onState: function (msg) {
+          updateBlocks();
+          msg_standings = msg.standings || [];
+          onState(msg);
+        },
+        onPlayer: onPlayer,
+      });
+    })();
+  </script>
+</body>
+</html>

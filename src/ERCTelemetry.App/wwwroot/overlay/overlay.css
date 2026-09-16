@@ -1,0 +1,316 @@
+/*
+ * ERCTelemetry overlay styles — personalization contract.
+ * Change ONLY the custom properties below (or override them in a copy of this file)
+ * to restyle the widgets: colors, font, translucency, corner rounding.
+ * The DOM structure and element IDs each page uses are documented in README.md.
+ */
+/* Orbitron — the erdi-erc.de display font, self-hosted (OFL license in ../fonts/OFL.txt).
+   Variable weight file; browsers interpolate any weight in the range. */
+@font-face {
+    font-family: 'Orbitron';
+    font-style: normal;
+    font-weight: 400 900;
+    font-display: swap;
+    src: url('../fonts/orbitron-var.woff2') format('woff2');
+}
+
+:root {
+    /* Widget surface: alpha lets the video show through in OBS browser sources. */
+    --overlay-widget-bg: rgba(12, 16, 24, 0.88);
+    --overlay-widget-border: rgba(255, 255, 255, 0.12);
+    --overlay-widget-radius: 8px;
+
+    --overlay-text: #f4f6fb;
+    --overlay-muted: #b8bfcb;
+    --overlay-accent: #e10600;      /* F1 red — player row, titles */
+    --overlay-track: rgba(184, 191, 203, 0.30); /* minimap track outline */
+    --overlay-mono: 'Cascadia Mono', 'Consolas', monospace;
+
+    --overlay-throttle: #35d07f;
+    --overlay-brake: #ff5a4e;
+    --overlay-ers: #6ea8fe;
+
+    /* Tyre compound chips */
+    --overlay-tyre-soft: #d21f3c;
+    --overlay-tyre-medium: #f3d02f;
+    --overlay-tyre-hard: #d7dae0;
+    --overlay-tyre-inter: #2fb457;
+    --overlay-tyre-wet: #2f6fd0;
+}
+
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    background: transparent;      /* OBS: video shows through outside widgets */
+    color: var(--overlay-text);
+    font: 14px/1.4 'Segoe UI', system-ui, sans-serif;
+}
+
+.widget {
+    background: var(--overlay-widget-bg);
+    border: 1px solid var(--overlay-widget-border);
+    border-top: 3px solid var(--overlay-accent); /* F1 red accent bar */
+    border-radius: var(--overlay-widget-radius);
+    padding: 10px 12px;
+    width: max-content;
+    min-width: 320px;
+    max-width: 100%;
+}
+
+.widget-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    font-family: 'Orbitron', 'Bahnschrift SemiBold Condensed', 'Bahnschrift', 'Segoe UI', sans-serif;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-size: 14px;
+    color: var(--overlay-text);
+    margin-bottom: 8px;
+}
+
+/* Red corner tick — broadcast-graphic nod next to the widget title. */
+.widget-title::before {
+    content: '';
+    align-self: stretch;
+    width: 4px;
+    border-radius: 2px;
+    background: var(--overlay-accent);
+    margin-right: 2px;
+}
+
+.muted { color: var(--overlay-muted); }
+.mono { font-family: var(--overlay-mono); }
+.spacer { flex: 1; }
+
+/* Empty-state line for list widgets (race control etc.) */
+.empty {
+    color: var(--overlay-muted);
+    font-size: 12px;
+    padding: 4px 0;
+    font-style: italic;
+}
+
+/* ---- standings table ---- */
+.standings { border-collapse: collapse; }
+.standings th {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--overlay-muted);
+    text-align: left;
+    padding: 2px 8px 4px 0;
+}
+.standings td {
+    padding: 3px 10px 3px 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
+    font-variant-numeric: tabular-nums;
+}
+.standings .pos {
+    font-weight: 700;
+    width: 26px;
+    color: var(--overlay-accent);
+    font-family: 'Orbitron', 'Bahnschrift SemiBold Condensed', 'Bahnschrift', sans-serif;
+    font-size: 15px;
+}
+.standings .num { color: var(--overlay-muted); width: 30px; }
+.standings .is-player td { background: rgba(225, 6, 0, 0.16); }
+.standings .is-out { opacity: 0.45; }
+.pit {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 0 4px;
+    border-radius: 3px;
+    background: #3a76d0;
+    color: #fff;
+}
+
+/* ---- shared chips / bars ---- */
+.tyre {
+    display: inline-block;
+    min-width: 34px;
+    text-align: center;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 10px;
+    color: #0c0e14;
+    background: #555;
+}
+.tyre-soft   { background: var(--overlay-tyre-soft); }
+.tyre-medium { background: var(--overlay-tyre-medium); }
+.tyre-hard   { background: var(--overlay-tyre-hard); }
+.tyre-inter  { background: var(--overlay-tyre-inter); color: #fff; }
+.tyre-wet    { background: var(--overlay-tyre-wet); color: #fff; }
+.tyre-unknown { background: #555; color: #ddd; }
+
+/* ---- player card ---- */
+.speed-row { display: flex; align-items: baseline; gap: 8px; }
+.speed {
+    font-family: 'Orbitron', 'Bahnschrift SemiBold Condensed', 'Bahnschrift', 'Segoe UI', sans-serif;
+    font-size: 48px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+}
+.unit { color: var(--overlay-muted); }
+.gear {
+    margin-left: auto;
+    font-family: 'Orbitron', 'Bahnschrift SemiBold Condensed', 'Bahnschrift', sans-serif;
+    font-size: 44px;
+    font-weight: 700;
+    color: var(--overlay-accent);
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+}
+
+.rpm-bar, .pedal {
+    background: rgba(255, 255, 255, 0.10);
+    border-radius: 3px;
+    overflow: hidden;
+    position: relative;
+}
+.rpm-bar { height: 8px; margin: 8px 0; }
+.rpm-bar .fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #35d07f, #f3d02f 70%, #ff5a4e);
+    transition: width 80ms linear;
+}
+
+.pedals { display: flex; align-items: stretch; gap: 6px; height: 46px; }
+.pedal-label { align-self: center; font-size: 11px; color: var(--overlay-muted); }
+.pedal { flex: 1; height: 100%; display: flex; align-items: flex-end; }
+.pedal .fill { width: 100%; height: 0%; transition: height 80ms linear; }
+.pedal.throttle .fill { background: var(--overlay-throttle); }
+.pedal.brake .fill { background: var(--overlay-brake); }
+.pedal.ers .fill { background: var(--overlay-ers); }
+
+.meta-row, .rival-row {
+    display: flex;
+    gap: 10px;
+    margin-top: 8px;
+    font-size: 13px;
+    align-items: center;
+}
+
+.drs {
+    font-weight: 800;
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    border: 1px solid var(--overlay-muted);
+    color: var(--overlay-muted);
+    display: none;
+}
+body.drs-on .drs {
+    display: inline-block;
+    background: #3a76d0;
+    border-color: #3a76d0;
+    color: #fff;
+}
+
+/* ---- race control feed ---- */
+.events { list-style: none; margin: 0; padding: 0; min-width: 320px; }
+.event {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+    padding: 3px 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+.event .badge {
+    font-size: 10px;
+    font-weight: 800;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: #3a76d0;
+    color: #fff;
+}
+.event-fastest-lap .badge { background: #b13ad0; }
+.event-personal-best .badge { background: #b36beb; }
+.event-retirement .badge { background: #d02f2f; }
+.event-penalty .badge { background: #d08a2f; }
+.event-session-started .badge { background: #2fb457; }
+.event-session-ended .badge { background: #555; }
+.event .text { flex: 1; }
+.event .time { color: var(--overlay-muted); font-size: 12px; font-family: var(--overlay-mono); }
+
+/* ---- reconnect hint ---- */
+/* While the socket is down overlay.js removes the .overlay-connected body class:
+   widgets dim and a small badge says the overlay is reconnecting. */
+body:not(.overlay-connected) .widget { opacity: 0.5; }
+body:not(.overlay-connected)::after {
+    content: 'verbinde…';
+    position: fixed;
+    top: 8px;
+    right: 8px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: rgba(225, 6, 0, 0.85);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    z-index: 9999;
+}
+
+/* ---- scheme: schwarz-rot-gold ---- */
+/* Toggled by overlay.js on hello/state (scheme === 'de'); overrides only the
+   tokens the German palette changes — everything else inherits classic. */
+body.scheme-de {
+    --overlay-accent: #dd0000;
+    --overlay-throttle: #ffce00;
+    --overlay-brake: #ff3333;
+    --overlay-ers: #ffce00;
+    --overlay-text: #f2efe4;
+    --overlay-muted: #b08f8f;
+    --overlay-track: rgba(176, 143, 143, 0.30);
+}
+
+/* ---- pedal column percent readouts (player-card) ---- */
+.pedal-value {
+    align-self: center;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    color: var(--overlay-muted);
+    min-width: 38px;
+    text-align: right;
+}
+
+/* ---- timing strip (player card) ---- */
+.pos-label {
+    font-family: 'Orbitron', 'Bahnschrift SemiBold Condensed', 'Bahnschrift', sans-serif;
+    font-size: 30px;
+    font-weight: 700;
+    color: var(--overlay-accent);
+    min-width: 44px;
+    line-height: 1;
+}
+
+.timing-row {
+    display: flex;
+    gap: 6px;
+    align-items: baseline;
+    margin: 6px 0 2px;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ---- weather forecast widget (standings page) ---- */
+.forecast {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+    margin-top: 10px;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    color: var(--overlay-muted);
+}
+.forecast .sample { white-space: nowrap; }
+.forecast .sample.rainy {
+    color: var(--overlay-text);
+    font-weight: 700;
+}

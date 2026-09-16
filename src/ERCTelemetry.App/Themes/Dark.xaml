@@ -1,0 +1,156 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- Dark theme (the only theme) — erdi-erc.de look: near-black ground (#030407), navy
+         glass panels (#0C1018/#10151F), F1-red accent (#E10600), Orbitron display type.
+         Brushes and fonts ONLY — all control templates live in the theme-neutral
+         dictionaries Themes/Inputs.xaml / Themes/Chrome.xaml / Themes/Broadcast.xaml,
+         which reference these keys via DynamicResource.
+
+         Typography policy:
+           - AppDisplayFont / AppRacingFont (Orbitron) = display ONLY: wordmark, headings,
+             nav labels, hero numbers, eyebrows. Minimum 14px — Orbitron digits are NOT
+             tabular, so never use it for time/number data cells.
+           - AppNumFont (Cascadia Mono) = all times, gaps, percentages, telemetry digits.
+           - AppBodyFont (Segoe UI) = body copy, labels, descriptions.
+           Orbitron is embedded as static TTFs (Fonts/Orbitron-Regular.ttf + -Bold.ttf,
+           OFL license in Fonts/OFL.txt) — variable TTFs do not work in WPF. -->
+
+    <!-- Ground + surfaces (erdi-erc.de: #030407 page, #0C1018 panels, #10151F strong) -->
+    <SolidColorBrush x:Key="AppBackground" Color="#FF030407" />
+    <SolidColorBrush x:Key="AppSurface" Color="#FF0C1018" />
+    <SolidColorBrush x:Key="AppSurfaceAlt" Color="#FF10151F" />
+    <SolidColorBrush x:Key="AppRail" Color="#FF07090F" />
+    <SolidColorBrush x:Key="AppRailHover" Color="#FF10151F" />
+
+    <!-- Text: primary #F4F6FB, muted ~74 %, dim ~59 % (#8792A3 ≈ 5.2:1 on #0C1018 —
+         small eyebrow/caption/fuel labels were ~3.8:1 and strained on dark panels).
+         AppNeutral (#6B7480) is intentionally NOT raised: it doubles as the Badge
+         BACKGROUND for white label text, and brighter would weaken that pair. -->
+    <SolidColorBrush x:Key="AppForeground" Color="#FFF4F6FB" />
+    <SolidColorBrush x:Key="AppMutedForeground" Color="#FFB8BFCB" />
+    <SolidColorBrush x:Key="AppDimForeground" Color="#FF8792A3" />
+
+    <!-- Lines + hover wash (white 12 % ≙ #232833 on panel) -->
+    <SolidColorBrush x:Key="AppDivider" Color="#FF232833" />
+    <SolidColorBrush x:Key="AppHover" Color="#14FFFFFF" />
+    <SolidColorBrush x:Key="AppCardBorder" Color="#FF232833" />
+    <SolidColorBrush x:Key="AppCardHighlight" Color="#FF10151F" />
+    <SolidColorBrush x:Key="AppRowHighlight" Color="#FF2E120C" />
+
+    <!-- Tables + lists -->
+    <SolidColorBrush x:Key="AppGridBackground" Color="#FF0A0D13" />
+    <SolidColorBrush x:Key="AppGridLines" Color="#FF1B2029" />
+    <SolidColorBrush x:Key="AppChartGrid" Color="#FF2F3A4A" />
+    <SolidColorBrush x:Key="AppListBackground" Color="#FF0A0D13" />
+
+    <!-- Banner / warning strip -->
+    <SolidColorBrush x:Key="AppBannerBackground" Color="#FF2A0F0C" />
+    <SolidColorBrush x:Key="AppBannerBorder" Color="#FFE10600" />
+    <SolidColorBrush x:Key="AppBannerText" Color="#FFFFB3B3" />
+
+    <!-- Status colors (lamps, badges, sectors) — bright dark-theme variants of the
+         website hues (site chips #0B8A3C/#B39000/#C9382F lack contrast on near-black) -->
+    <SolidColorBrush x:Key="AppStatusGood" Color="#FF35D07F" />
+    <SolidColorBrush x:Key="AppStatusCritical" Color="#FFFF5A4E" />
+    <SolidColorBrush x:Key="AppStatusWarn" Color="#FFF3D02F" />
+    <SolidColorBrush x:Key="AppStatusInfo" Color="#FF6EA8FE" />
+    <SolidColorBrush x:Key="AppSectorPurple" Color="#FFA26BF0" />
+    <SolidColorBrush x:Key="AppNeutral" Color="#FF6B7480" />
+
+    <!-- Scrollbars -->
+    <SolidColorBrush x:Key="AppScrollbar" Color="#FF2A3040" />
+    <SolidColorBrush x:Key="AppScrollbarHover" Color="#FF3D4454" />
+
+    <!-- F1 red — shared accent for chrome, buttons, headers. -->
+    <SolidColorBrush x:Key="AppAccent" Color="#FFE10600" />
+    <SolidColorBrush x:Key="AppAccentHover" Color="#FFFF2A14" />
+    <SolidColorBrush x:Key="AppAccentText" Color="#FFFFFFFF" />
+    <SolidColorBrush x:Key="AppAccentSoft" Color="#FF2E120C" />
+    <SolidColorBrush x:Key="AppChrome" Color="#FF10151F" />
+    <SolidColorBrush x:Key="AppChromeBorder" Color="#FF232833" />
+    <SolidColorBrush x:Key="AppChromeBorderHover" Color="#FF6EA8FE" />
+
+    <!-- Website accents: links, hero glow, podium metals, team-color fallback. -->
+    <SolidColorBrush x:Key="AppLink" Color="#FF6EA8FE" />
+    <SolidColorBrush x:Key="AppGlow" Color="#226692FF" />
+    <SolidColorBrush x:Key="AppTeamColorFallback" Color="#FF8B929C" />
+    <SolidColorBrush x:Key="AppGold" Color="#FFA8781A" />
+    <SolidColorBrush x:Key="AppSilver" Color="#FF8B929C" />
+    <SolidColorBrush x:Key="AppBronze" Color="#FFA5652C" />
+
+    <!-- Stat-tile bottom bar (purple→green→yellow, like the website stat cards). -->
+    <LinearGradientBrush x:Key="AppStatBar" StartPoint="0,0" EndPoint="1,0">
+        <GradientStop Color="#FF7A3BB5" Offset="0" />
+        <GradientStop Color="#FF35D07F" Offset="0.5" />
+        <GradientStop Color="#FFF3D02F" Offset="1" />
+    </LinearGradientBrush>
+
+    <!-- F1-TV broadcast look: chequered flag strips, speed-line texture, red header
+         rule, glow behind hero speed/gear, gauge gloss, red drop shadow. Effects are
+         used sparingly (hero speed, wordmark, primary hover only) to limit render cost. -->
+    <DrawingBrush x:Key="AppChequer" TileMode="Tile" Viewport="0,0,8,8" ViewportUnits="Absolute"
+                  Stretch="None">
+        <DrawingBrush.Drawing>
+            <DrawingGroup>
+                <GeometryDrawing Brush="#FF161C26">
+                    <GeometryDrawing.Geometry>
+                        <RectangleGeometry Rect="0,0,8,8" />
+                    </GeometryDrawing.Geometry>
+                </GeometryDrawing>
+                <GeometryDrawing Brush="#FFF4F6FB">
+                    <GeometryDrawing.Geometry>
+                        <GeometryGroup>
+                            <RectangleGeometry Rect="0,0,4,4" />
+                            <RectangleGeometry Rect="4,4,4,4" />
+                        </GeometryGroup>
+                    </GeometryDrawing.Geometry>
+                </GeometryDrawing>
+            </DrawingGroup>
+        </DrawingBrush.Drawing>
+    </DrawingBrush>
+
+    <DrawingBrush x:Key="AppSpeedLines" TileMode="Tile" Viewport="0,0,24,24" ViewportUnits="Absolute"
+                  Opacity="0.06" Stretch="None">
+        <DrawingBrush.Drawing>
+            <GeometryDrawing Brush="{x:Null}">
+                <GeometryDrawing.Pen>
+                    <Pen Brush="#FFC7CFDB" Thickness="1" />
+                </GeometryDrawing.Pen>
+                <GeometryDrawing.Geometry>
+                    <GeometryGroup>
+                        <LineGeometry StartPoint="-6,18" EndPoint="18,-6" />
+                        <LineGeometry StartPoint="-6,26" EndPoint="18,2" />
+                    </GeometryGroup>
+                </GeometryDrawing.Geometry>
+            </GeometryDrawing>
+        </DrawingBrush.Drawing>
+    </DrawingBrush>
+
+    <LinearGradientBrush x:Key="AppHeaderRule" StartPoint="0,0" EndPoint="1,0">
+        <GradientStop Color="#FFE10600" Offset="0" />
+        <GradientStop Color="#FFE10600" Offset="0.35" />
+        <GradientStop Color="#00E10600" Offset="1" />
+    </LinearGradientBrush>
+
+    <RadialGradientBrush x:Key="AppGlowRed" Center="0.5,0.5" GradientOrigin="0.5,0.5" RadiusX="0.5" RadiusY="0.5">
+        <GradientStop Color="#FF4E2A1C" Offset="0" />
+        <GradientStop Color="#264E2A1C" Offset="0.75" />
+        <GradientStop Color="#004E2A1C" Offset="1" />
+    </RadialGradientBrush>
+
+    <DropShadowEffect x:Key="AppAccentShadow" Color="#E10600" BlurRadius="14" ShadowDepth="0"
+                      Opacity="0.85" />
+
+    <!-- Eyebrow label color (uppercase micro-labels; WPF has no letter-spacing).
+         Matches the raised dim foreground — 11px SemiBold micro-labels need ~5:1. -->
+    <SolidColorBrush x:Key="AppEyebrowForeground" Color="#FF8792A3" />
+
+    <!-- Typography: Orbitron display (embedded), Segoe UI body, Cascadia Mono digits.
+         AppRacingFont keeps its historical key name pointing at Orbitron so the ~50
+         existing references adopt the display font without individual edits. -->
+    <FontFamily x:Key="AppDisplayFont">pack://application:,,,/ERCTelemetry.App;Component/Fonts/#Orbitron</FontFamily>
+    <FontFamily x:Key="AppRacingFont">pack://application:,,,/ERCTelemetry.App;Component/Fonts/#Orbitron</FontFamily>
+    <FontFamily x:Key="AppBodyFont">Segoe UI, Segoe UI Variable Display</FontFamily>
+    <FontFamily x:Key="AppNumFont">Cascadia Mono, Cascadia Code, Consolas</FontFamily>
+</ResourceDictionary>

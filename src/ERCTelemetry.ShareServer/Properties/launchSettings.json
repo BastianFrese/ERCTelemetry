@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "ERCTelemetry.ShareServer": {
+      "commandName": "Project",
+      "launchBrowser": true,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "applicationUrl": "https://localhost:52687;http://localhost:52688"
+    }
+  }
+}

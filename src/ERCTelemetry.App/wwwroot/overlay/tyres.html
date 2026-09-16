@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ERCTelemetry — Tyre heatmap overlay</title>
+<link rel="stylesheet" href="overlay.css">
+<style>
+  /* Page-local heatmap styles — colors build on the overlay.css tyre tokens. */
+  .tyre-heat td { padding: 3px 6px 3px 0; }
+  .heat {
+    width: 88px;
+    height: 16px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.08);
+    position: relative;
+    overflow: hidden;
+  }
+  .heat .fill { height: 100%; transition: width 200ms linear; }
+  .heat-wear .fill { background: linear-gradient(90deg, #2fb457, #f3d02f 65%, #ff5a4e); }
+  .heat-damage .fill { background: linear-gradient(90deg, #6ea8fe, #d08a2f 65%, #ff5a4e); }
+  th.heat-head { text-align: left; }
+</style>
+</head>
+<body>
+  <div class="widget" id="tyres-widget">
+    <div class="widget-title">
+      <span id="session-title">Waiting for telemetry…</span>
+      <span class="muted" id="car-count"></span>
+    </div>
+    <table class="standings tyre-heat">
+      <thead>
+        <tr>
+          <th>Pos</th><th>Driver</th><th>Tyre</th>
+          <th class="heat-head">Wear</th><th class="heat-head">Damage</th>
+        </tr>
+      </thead>
+      <tbody id="tyres-body"></tbody>
+    </table>
+    <noscript>JavaScript required for the live overlay.</noscript>
+  </div>
+  <script src="overlay.js"></script>
+  <script>
+    (function () {
+      'use strict';
+      var fmt = window.overlayFormat;
+      var body = document.getElementById('tyres-body');
+      var title = document.getElementById('session-title');
+      var count = document.getElementById('car-count');
+
+      function tyreClass(c) {
+        // Same compound mapping as standings.html.
+        if (/C5|C4|SOFT/i.test(c)) return 'tyre-soft';
+        if (/C3|C2|MEDIUM/i.test(c)) return 'tyre-medium';
+        if (/C1|C0|HARD|DRY/i.test(c)) return 'tyre-hard';
+        if (/INTER/i.test(c)) return 'tyre-inter';
+        if (/WET/i.test(c)) return 'tyre-wet';
+        return 'tyre-unknown';
+      }
+
+      function sessionLabel(s) {
+        if (!s) return 'Waiting for telemetry…';
+        var laps = s.totalLaps > 0 ? s.totalLaps + ' laps'
+          : Math.floor(s.sessionTimeLeft / 60) + ':' + String(s.sessionTimeLeft % 60).padStart(2, '0');
+        return s.sessionType + ' · ' + s.track + ' · ' + laps;
+      }
+
+      // block visibility — the heat grid follows the app's tyre-block toggle.
+      var BLOCK_KEYS = { 'tyres-widget': 'com.tyres' };
+      function updateBlocks() {
+        var cfg = window.overlayBlocks || {};
+        Object.keys(BLOCK_KEYS).forEach(function (id) {
+          var el = document.getElementById(id);
+          if (!el) return;
+          var cfgOn = cfg[BLOCK_KEYS[id]] === undefined ? true : !!cfg[BLOCK_KEYS[id]];
+          el.hidden = !cfgOn;
+        });
+      }
+
+      window.connectOverlay({
+        onConfig: function () { updateBlocks(); },
+        onState: function (msg) {
+          updateBlocks();
+          title.textContent = sessionLabel(msg.session);
+          var tyres = msg.tyres || [];
+          count.textContent = tyres.length + ' cars';
+          var byCar = {};
+          tyres.forEach(function (t) { byCar[t.carIndex] = t; });
+
+          body.innerHTML = '';
+          // Order by the live standings; cars without CarDamage yet are skipped,
+          // matching the server which only ranks cars that have reported.
+          var rows = (msg.standings || []).filter(function (r) { return byCar[r.carIndex]; });
+          if (!rows.length && tyres.length) {
+            // No standings yet (e.g. pre-session) — fall back to car index order.
+            rows = tyres.map(function (t) { return { carIndex: t.carIndex, name: 'Car ' + (t.carIndex + 1), tyreCompound: '', position: t.carIndex + 1 }; });
+          }
+          rows.forEach(function (row) {
+            var t = byCar[row.carIndex];
+            var tr = document.createElement('tr');
+            if (row.isPlayer) tr.className = 'is-player';
+            tr.innerHTML =
+              '<td class="pos">' + row.position + '</td>' +
+              '<td class="name">' + row.name + '</td>' +
+              '<td><span class="tyre ' + tyreClass(row.tyreCompound || '') + '">' +
+                String(row.tyreCompound || '?').replace(/^F1C/, 'C').replace(/^F1/, '') + '</span></td>' +
+              '<td><div class="heat heat-wear"><div class="fill" style="width:' + fmt.pct(t.wearPercent) + '"></div></div></td>' +
+              '<td><div class="heat heat-damage"><div class="fill" style="width:' + fmt.pct(t.damagePercent) + '"></div></div></td>';
+            body.appendChild(tr);
+          });
+        },
+      });
+    })();
+  </script>
+</body>
+</html>

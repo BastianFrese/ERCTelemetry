@@ -1,0 +1,27 @@
+<Window x:Class="ERCTelemetry.App.Update.UpdateLogWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Update-Log" Width="560" Height="620"
+        WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource AppBackground}" UseLayoutRounding="True">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <StackPanel Grid.Row="0" Margin="24,20,24,0">
+            <TextBlock x:Name="HeaderText" Text="Was ist neu?" FontSize="22" FontWeight="Bold"
+                       Foreground="{DynamicResource AppForeground}" />
+            <TextBlock x:Name="SubHeaderText" FontSize="13"
+                       Foreground="{DynamicResource AppDimForeground}" Margin="0,4,0,0" />
+        </StackPanel>
+        <ScrollViewer Grid.Row="1" Margin="24,16,24,0" VerticalScrollBarVisibility="Auto">
+            <StackPanel x:Name="LogPanel" />
+        </ScrollViewer>
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right"
+                    Margin="24,12,24,20">
+            <Button Content="Verstanden" Padding="16,6" IsDefault="True" IsCancel="True" Click="OnClose" />
+        </StackPanel>
+    </Grid>
+</Window>

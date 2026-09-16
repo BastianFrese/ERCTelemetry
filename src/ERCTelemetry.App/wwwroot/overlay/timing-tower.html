@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ERCTelemetry — Timing tower overlay</title>
+<link rel="stylesheet" href="overlay.css">
+<style>
+  /* Page-local timing-tower styles — compact TV-style tower. */
+  .tower { border-collapse: collapse; min-width: 240px; }
+  .tower td {
+    padding: 2px 8px 2px 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .tower th { padding: 0 8px 4px 0; }
+  .tower .pos {
+    font-weight: 700;
+    width: 24px;
+    text-align: center;
+    background: rgba(255, 255, 255, 0.06);
+  }
+  .tower .name { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+  .tower .gap { font-family: var(--overlay-mono); font-size: 12px; color: var(--overlay-muted); }
+  .tower .is-player td { background: rgba(225, 6, 0, 0.16); }
+  .tower .is-player td.pos { background: rgba(225, 6, 0, 0.35); }
+  .tower .is-out { opacity: 0.45; }
+  .tower .leader td.gap { color: var(--overlay-text); font-weight: 700; }
+  .tower .fl {
+    display: inline-block; background: #b13ad0; color: #fff;
+    font-size: 9px; font-weight: 800; padding: 0 4px; border-radius: 3px;
+  }
+  .tower .battle td.gap { color: var(--overlay-tyre-medium); font-weight: 700; }
+</style>
+</head>
+<body>
+  <div class="widget" id="tower-widget">
+    <div class="widget-title">
+      <span id="session-title">Waiting for telemetry…</span>
+      <span class="muted" id="driver-count"></span>
+    </div>
+    <table class="tower">
+      <thead>
+        <tr><th>Pos</th><th>Driver</th><th>Interval</th><th>Δ</th><th>St</th></tr>
+      </thead>
+      <tbody id="tower-body"></tbody>
+    </table>
+    <noscript>JavaScript required for the live overlay.</noscript>
+  </div>
+  <script src="overlay.js"></script>
+  <script>
+    (function () {
+      'use strict';
+      var fmt = window.overlayFormat;
+      var body = document.getElementById('tower-body');
+      var title = document.getElementById('session-title');
+      var count = document.getElementById('driver-count');
+
+      function sessionLabel(s) {
+        if (!s) return 'Waiting for telemetry…';
+        var laps = s.totalLaps > 0 ? s.totalLaps + ' laps'
+          : Math.floor(s.sessionTimeLeft / 60) + ':' + String(s.sessionTimeLeft % 60).padStart(2, '0');
+        return s.sessionType + ' · ' + s.track + ' · ' + laps;
+      }
+
+      var fastestOverallMs = 0; // session-best lap → purple FL badge
+
+      function delta(row) {
+        if (row.gridPosition === undefined || row.gridPosition >= 255) return '';
+        var d = row.gridPosition - row.position;
+        return d === 0 ? '' : (d > 0 ? '+' + d : String(d));
+      }
+
+      function stops(row) {
+        return row.pitStops > 0 ? String(row.pitStops) : '';
+      }
+
+      // TV-tower interval: everyone shows gap to leader (gap to car-in-front is too
+      // noisy on a tower); pit and retired cars keep badges/dimming.
+      function interval(row) {
+        if (row.pitStatus === 'Pitting') return 'PIT';
+        if (row.pitStatus === 'InPit') return 'IN PIT';
+        return fmt.gap(row.gapToLeaderMs);
+      }
+
+      window.connectOverlay({
+        onState: function (msg) {
+          title.textContent = sessionLabel(msg.session);
+          count.textContent = (msg.standings || []).length + ' cars';
+
+          // session-best lap tracking for the FL badge
+          (msg.standings || []).forEach(function (r) {
+            if (r.bestLapTimeMs > 0 &&
+                (fastestOverallMs === 0 || r.bestLapTimeMs < fastestOverallMs)) {
+              fastestOverallMs = r.bestLapTimeMs;
+            }
+          });
+
+          body.innerHTML = '';
+          (msg.standings || []).forEach(function (row, i) {
+            var tr = document.createElement('tr');
+            var cls = [];
+            if (row.isPlayer) cls.push('is-player');
+            if (row.resultStatus === 'Retired' || row.resultStatus === 'DidNotFinish') cls.push('is-out');
+            if (i === 0) cls.push('leader');
+            if (i > 0 && row.gapToCarInFrontMs > 0 && row.gapToCarInFrontMs < 1000) cls.push('battle');
+            if (cls.length) tr.className = cls.join(' ');
+            tr.innerHTML =
+              '<td class="pos">' + row.position + '</td>' +
+              '<td class="name">' + row.name +
+                (row.bestLapTimeMs > 0 && row.bestLapTimeMs === fastestOverallMs ? ' <span class="fl">FL</span>' : '') +
+              '</td>' +
+              '<td class="gap">' + interval(row) + '</td>' +
+              '<td class="gap">Δ' + delta(row) + '</td>' +
+              '<td class="gap">' + stops(row) + '</td>';
+            body.appendChild(tr);
+          });
+        },
+      });
+    })();
+  </script>
+</body>
+</html>

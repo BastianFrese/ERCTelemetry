@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ERCTelemetry — Relative overlay</title>
+<link rel="stylesheet" href="overlay.css">
+<style>
+  /* Page-local relative-styles — the cars around the player with live gaps. */
+  .rel { border-collapse: collapse; min-width: 240px; }
+  .rel td {
+    padding: 2px 8px 2px 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .rel th { padding: 0 8px 4px 0; }
+  .rel .pos {
+    font-weight: 700;
+    width: 24px;
+    text-align: center;
+    background: rgba(255, 255, 255, 0.06);
+  }
+  .rel .name { max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
+  .rel .gap { font-family: var(--overlay-mono); font-size: 12px; color: var(--overlay-muted); }
+  .rel .is-player td { background: rgba(225, 6, 0, 0.16); }
+  .rel .is-player td.pos { background: rgba(225, 6, 0, 0.35); }
+  .rel .is-player td.gap { color: var(--overlay-text); }
+  .rel .is-out { opacity: 0.45; }
+  .rel .battle td.gap { color: var(--overlay-tyre-medium); font-weight: 700; }
+  .rel .lapped td.lap { color: var(--overlay-tyre-medium); font-size: 10px; font-weight: 700; }
+  .rel .pit { color: var(--overlay-tyre-medium); font-size: 9px; font-weight: 800; }
+  .tyre {
+    display: inline-block; width: 16px; text-align: center;
+    font-size: 9px; font-weight: 800; padding: 0 2px; border-radius: 3px;
+  }
+  .tyre-soft { background: var(--overlay-accent); color: #fff; }
+  .tyre-medium { background: var(--overlay-tyre-medium); color: #222; }
+  .tyre-hard { background: #e8e8e8; color: #222; }
+  .tyre-inter { background: var(--overlay-throttle); color: #06281a; }
+  .tyre-wet { background: #3d8bff; color: #fff; }
+  .tyre-unknown { background: rgba(255, 255, 255, 0.2); color: #fff; }
+</style>
+</head>
+<body>
+  <div class="widget" id="relative-widget">
+    <div class="widget-title">
+      <span id="session-title">Waiting for telemetry…</span>
+      <span class="muted" id="window-label"></span>
+    </div>
+    <table class="rel">
+      <thead>
+        <tr><th>Pos</th><th>Driver</th><th>Gap</th><th>Lap</th></tr>
+      </thead>
+      <tbody id="rel-body"></tbody>
+    </table>
+    <noscript>JavaScript required for the live overlay.</noscript>
+  </div>
+  <script src="overlay.js"></script>
+  <script>
+    (function () {
+      'use strict';
+      var fmt = window.overlayFormat;
+      var body = document.getElementById('rel-body');
+      var title = document.getElementById('session-title');
+      var label = document.getElementById('window-label');
+
+      var WINDOW = 5; // cars ahead/behind the player shown either side
+
+      function sessionLabel(s) {
+        if (!s) return 'Waiting for telemetry…';
+        var laps = s.totalLaps > 0 ? s.totalLaps + ' laps'
+          : Math.floor(s.sessionTimeLeft / 60) + ':' + String(s.sessionTimeLeft % 60).padStart(2, '0');
+        return s.sessionType + ' · ' + s.track + ' · ' + laps;
+      }
+
+      function tyreText(c) { return c.replace(/^F1C/, 'C').replace(/^F1/, ''); }
+      function tyreClass(c) {
+        if (/C5|C4|SOFT/i.test(c)) return 'tyre-soft';
+        if (/C3|C2|MEDIUM/i.test(c)) return 'tyre-medium';
+        if (/C1|C0|HARD|DRY/i.test(c)) return 'tyre-hard';
+        if (/INTER/i.test(c)) return 'tyre-inter';
+        if (/WET/i.test(c)) return 'tyre-wet';
+        return 'tyre-unknown';
+      }
+
+      // Gap relative to the PLAYER (leader-relative values subtracted — consistent
+      // within a race because both come from the same LapData snapshot).
+      function gapToPlayer(row, playerGapMs) {
+        if (row.isPlayer) return '—';
+        if (row.gapToLeaderMs < 0 || playerGapMs < 0) return '—';
+        var rel = row.gapToLeaderMs - playerGapMs;
+        if (rel === 0) return 'Leader';
+        return (rel > 0 ? '+' : '−') + (Math.abs(rel) / 1000).toFixed(3);
+      }
+
+      function lapCell(row, playerLap) {
+        var diff = row.currentLapNum - playerLap;
+        if (diff >= 1) return '+' + diff + ' LAP' + (diff > 1 ? 'S' : '');
+        if (diff <= -1) return '−' + (-diff) + ' LAP' + (diff < -1 ? 'S' : '');
+        return String(row.currentLapNum);
+      }
+
+      window.connectOverlay({
+        onState: function (msg) {
+          title.textContent = sessionLabel(msg.session);
+          var standings = msg.standings || [];
+          var player = null;
+          standings.forEach(function (r) {
+            if (r.isPlayer) player = r;
+          });
+          if (!player) {
+            label.textContent = '';
+            body.innerHTML = '';
+            return;
+          }
+
+          var playerPos = player.position;
+          var minPos = playerPos - WINDOW;
+          var maxPos = playerPos + WINDOW;
+          var shown = standings.filter(function (r) {
+            return r.position >= minPos && r.position <= maxPos;
+          });
+          label.textContent = 'P' + minPos + '–P' + maxPos;
+
+          body.innerHTML = '';
+          shown.forEach(function (row) {
+            var tr = document.createElement('tr');
+            var cls = [];
+            if (row.isPlayer) cls.push('is-player');
+            if (row.resultStatus === 'Retired' || row.resultStatus === 'DidNotFinish') cls.push('is-out');
+            // battle = car (or player) under 1 s relative to the player
+            var relKnown = row.gapToLeaderMs >= 0 && player.gapToLeaderMs >= 0;
+            var relMs = relKnown ? row.gapToLeaderMs - player.gapToLeaderMs : 0;
+            if (!row.isPlayer && Math.abs(relMs) < 1000 && relMs !== 0) cls.push('battle');
+            if (row.currentLapNum - player.currentLapNum !== 0) cls.push('lapped');
+            if (cls.length) tr.className = cls.join(' ');
+            tr.innerHTML =
+              '<td class="pos">' + row.position + '</td>' +
+              '<td class="name"><span class="tyre ' + tyreClass(row.tyreCompound) + '">' +
+                tyreText(row.tyreCompound) + '</span> ' + row.name +
+                (row.pitStatus === 'Pitting' || row.pitStatus === 'InPit'
+                  ? ' <span class="pit">PIT</span>' : '') +
+              '</td>' +
+              '<td class="gap">' + gapToPlayer(row, player.gapToLeaderMs) + '</td>' +
+              '<td class="lap">' + lapCell(row, player.currentLapNum) + '</td>';
+            body.appendChild(tr);
+          });
+        },
+      });
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+# Build-Artefakte
+bin/
+obj/
+publish/
+
+# IDE / lokal
+.vs/
+*.user
+*.suo
+
+# Lokale Claude-/Verifikations-Artefakte
+.claude/
+.verification/
+maptest_early.png
+
+# Release-Staging & gebaute Setups (installer/release + stage + shareserver-stage)
+installer/release/
+installer/stage/
+installer/shareserver-stage/
+
+# Werkzeug-Cache
+cache/

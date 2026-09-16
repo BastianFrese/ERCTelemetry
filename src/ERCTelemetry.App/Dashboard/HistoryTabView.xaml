@@ -1,0 +1,9 @@
+<UserControl x:Class="ERCTelemetry.App.Dashboard.HistoryTabView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:local="clr-namespace:ERCTelemetry.App.Dashboard"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid>
+        <local:SessionListView x:Name="List" />
+        <local:SessionDetailView x:Name="Detail" Visibility="Collapsed" />
+    </Grid>
+</UserControl>

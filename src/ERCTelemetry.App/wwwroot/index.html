@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ERCTelemetry — Overlay Center</title>
+<style>
+  :root{--bg:#030407;--surface:#0c1018;--surface2:#10151f;--border:rgba(255,255,255,.12);--text:#f4f6fb;--muted:#b8bfcb;--red:#e10600;--gold:#f3d02f;--green:#35d07f;--blue:#6ea8fe}
+  *{box-sizing:border-box}
+  @font-face{font-family:'Orbitron';font-style:normal;font-weight:400 900;font-display:swap;src:url('fonts/orbitron-var.woff2') format('woff2')}
+  body{margin:0;font:15px/1.55 'Segoe UI',system-ui,sans-serif;color:var(--text);background:radial-gradient(1000px 500px at 85% -10%,rgba(225,6,0,.13),transparent 60%),var(--bg)}
+  .wrap{max-width:1060px;margin:0 auto;padding:0 24px}
+  .topbar{border-bottom:3px solid var(--red);background:rgba(3,4,7,.92);position:sticky;top:0;z-index:10}
+  header{display:flex;align-items:center;gap:14px;padding:16px 0;flex-wrap:wrap}
+  .logo{font-family:'Orbitron','Bahnschrift SemiBold Condensed','Bahnschrift',sans-serif;font-size:24px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+  .logo em{color:var(--red);font-style:normal}
+  .status{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
+  .dot{width:10px;height:10px;border-radius:50%;background:#555}
+  .dot.on{background:var(--green);box-shadow:0 0 8px rgba(53,208,127,.8)}
+  .dot.off{background:#ff5a4e}
+  nav{display:flex;gap:18px;padding-bottom:10px;flex-wrap:wrap}
+  nav a{color:var(--muted);text-decoration:none;font-size:14px}
+  nav a:hover{color:var(--text)}
+  main{padding:24px 0 50px}
+  h2{font-family:'Orbitron','Bahnschrift SemiBold Condensed','Bahnschrift',sans-serif;font-size:17px;letter-spacing:.08em;text-transform:uppercase;margin:30px 0 12px;display:flex;align-items:center;gap:10px}
+  h2::before{content:'';width:4px;height:18px;border-radius:2px;background:var(--red)}
+  main h2:first-child{margin-top:4px}
+  .lead{color:var(--muted);font-size:14px;margin:0 0 16px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:14px}
+  a.card{display:flex;flex-direction:column;gap:6px;background:var(--surface);border:1px solid var(--border);border-top:3px solid var(--red);border-radius:10px;padding:14px 16px;color:var(--text);text-decoration:none;transition:transform .15s,border-color .15s}
+  a.card:hover{transform:translateY(-2px);border-color:rgba(225,6,0,.6)}
+  .card-title{font-weight:700;font-size:16px}
+  .card-desc{color:var(--muted);font-size:13.5px}
+  .card-meta{display:flex;gap:8px;flex-wrap:wrap;margin-top:auto;padding-top:6px}
+  .tag{font-size:11px;font-weight:600;padding:1px 8px;border-radius:20px;background:var(--surface2);border:1px solid var(--border);color:var(--muted)}
+  .tag.size{font-family:'Cascadia Mono',Consolas,monospace}
+  .tag.new{background:rgba(243,208,47,.12);border-color:rgba(243,208,47,.45);color:var(--gold)}
+  .tag.hud{background:rgba(110,168,254,.10);border-color:rgba(110,168,254,.4);color:var(--blue)}
+  .steps{counter-reset:step;margin:0;padding:0;list-style:none}
+  .steps li{counter-increment:step;display:flex;gap:12px;padding:9px 0;border-bottom:1px solid var(--border);font-size:14.5px}
+  .steps li::before{content:counter(step);flex:0 0 24px;height:24px;border-radius:50%;background:var(--red);color:#fff;font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center;margin-top:1px}
+  .panel{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px 20px;margin-top:14px}
+  .panel h3{margin:0 0 8px;font-size:16px}
+  .panel p{margin:6px 0;color:var(--muted);font-size:14px}
+  .panel p b{color:var(--text)}
+  code{background:var(--surface2);border:1px solid var(--border);padding:1px 6px;border-radius:4px;font-family:'Cascadia Mono',Consolas,monospace;font-size:12.5px}
+  kbd{background:var(--surface2);border:1px solid var(--border);border-bottom-width:2px;border-radius:4px;padding:0 6px;font-family:'Cascadia Mono',Consolas,monospace;font-size:12.5px}
+  footer{color:var(--muted);font-size:12.5px;padding:26px 0 40px}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="wrap">
+    <header>
+      <div class="logo">ERC<em>Telemetry</em></div>
+      <div class="status"><span class="dot" id="dot"></span><span id="st">Verbinde…</span></div>
+    </header>
+  </div>
+</div>
+<div class="wrap">
+  <main>
+    <h2>Overlay-Quellen</h2>
+    <p class="lead">Jede Karte ist eine OBS-Browser-Source. Der Hintergrund bleibt transparent —<br>im Stream sieht man nur die Widgets.</p>
+    <div class="grid">
+      <a class="card" href="/overlay/broadcast.html" style="grid-column: 1 / -1;">
+        <span class="card-title">📺 Broadcast main overlay <span class="tag new">neu</span></span>
+        <span class="card-desc">Die eine Seite für den Stream: Session-Strip (Rennen · Strecke · Restzeit · Wetter · Regen-Forecast · Pit-Fenster), Timing-Tower mit Sektoren-Splittern (grün/lila), Player-Strip (Speed/Gang/RPM/Pedals/Fuel/DRS/Invalid-Lap), Minimap und Race-Control-Feed — alles auf einer 1920×1080-Seite im TV-Look.</span>
+        <span class="card-meta"><span class="tag size">1920×1080</span><span class="tag hud">Haupt-Overlay</span></span>
+      </a>
+      <a class="card" href="/overlay/standings.html">
+        <span class="card-title">🏁 Live standings</span>
+        <span class="card-desc">Leaderboard für jeden Spieler — Position, Fahrer, Runden-/Bestzeiten, Gap, Reifen, Wetter-Forecast.</span>
+        <span class="card-meta"><span class="tag size">≈700×400</span></span>
+      </a>
+      <a class="card" href="/overlay/player-card.html">
+        <span class="card-title">🎮 Player card</span>
+        <span class="card-desc">Speed, Gang, RPM, Gas/Bremse/ERS mit %, Fuel, Reifen — plus Rivale-Zeile.</span>
+        <span class="card-meta"><span class="tag size">≈400×230</span></span>
+      </a>
+      <a class="card" href="/overlay/telemetry.html">
+        <span class="card-title">📊 Telemetry panel <span class="tag new">neu</span></span>
+        <span class="card-desc">Session, Wetter &amp; Regen-Forecast, Spieler &amp; Rivale: Wear/Damage, Fuel, Pedals %, ERS-Modus.</span>
+        <span class="card-meta"><span class="tag size">≈660×720</span></span>
+      </a>
+      <a class="card" href="/overlay/commentary.html">
+        <span class="card-title">🎙️ Commentary pack <span class="tag new">neu</span></span>
+        <span class="card-desc">Battles &lt;1&nbsp;s, Mover vs Grid, Fastest Laps, Pits &amp; Trouble, älteste Reifen — Broadcast-Assistent.</span>
+        <span class="card-meta"><span class="tag size">≈1150×620</span><span class="tag hud">auch im HUD</span></span>
+      </a>
+      <a class="card" href="/overlay/h2h.html">
+        <span class="card-title">⚔️ Head-to-Head <span class="tag new">neu</span></span>
+        <span class="card-desc">Zwei Fahrer direkt duellieren: Position, Name &amp; Gap, letzte/beste Runde (grün = schneller), Sektoren mit Delta, Reifen &amp; Wear, Boxenstopps und Bilanz (Runden/Positionen gewonnen) — Fahrer frei wählbar.</span>
+        <span class="card-meta"><span class="tag size">≈420×640</span></span>
+      </a>
+      <a class="card" href="/overlay/timing-tower.html">
+        <span class="card-title">🗼 Timing tower</span>
+        <span class="card-desc">TV-Tower: Position, Fahrer, Interval, Δ Grid-Delta, St Stopps, Battle-Zeilen, FL-Badge.</span>
+        <span class="card-meta"><span class="tag size">≈420×640</span></span>
+      </a>
+      <a class="card" href="/overlay/relative.html">
+        <span class="card-title">🔁 Relative <span class="tag new">neu</span></span>
+        <span class="card-desc">Die Autos um dich herum (±5 Plätze) mit Gap relativ ZU DIR, Reifen-Chip, Pit-Badge und Runden-Vorsprung/Rückstand.</span>
+        <span class="card-meta"><span class="tag size">≈300×360</span></span>
+      </a>
+      <a class="card" href="/overlay/race-control.html">
+        <span class="card-title">🚩 Race control</span>
+        <span class="card-desc">Fastest Laps, Strafen, Ausfälle, Session-Start/Ende — als Meldungs-Feed.</span>
+        <span class="card-meta"><span class="tag size">≈420×500</span></span>
+      </a>
+      <a class="card" href="/overlay/map.html">
+        <span class="card-title">🗺️ Minimap</span>
+        <span class="card-desc">Live-Positionen aller Autos auf der Strecke, auto-skalierend pro Session.</span>
+        <span class="card-meta"><span class="tag size">≈340×230</span></span>
+      </a>
+      <a class="card" href="/overlay/tyres.html">
+        <span class="card-title">🛞 Tyre heatmap</span>
+        <span class="card-desc">Wear &amp; Damage pro Auto (schlimmstes Rad), sortiert nach Reihenfolge.</span>
+        <span class="card-meta"><span class="tag size">≈700×420</span></span>
+      </a>
+    </div>
+
+    <h2 id="setup">OBS-Setup</h2>
+    <div class="panel">
+      <ol class="steps">
+        <li>App starten — der Overlay-Server läuft automatisch auf <code>127.0.0.1:8090</code> (nur lokal).</li>
+        <li>OBS: <b>Quellen → + → Browser</b>; URL einer Karte oben einfügen, Größe auf den Kartenwert setzen.</li>
+        <li>„Shutdown source when not visible" und „Refresh browser when scene becomes active" <b>ausschalten</b> — die Seiten verwalten sich selbst und reconnecten.</li>
+        <li>Daten erscheinen, sobald F1 26 streamt und die App eine Session anzeigt.</li>
+      </ol>
+    </div>
+
+    <h2>In-Game-HUD (ohne OBS)</h2>
+    <div class="panel">
+      <p><kbd>Ctrl+Shift+O</kbd> blendet das HUD im Spiel ein/aus — randloser Fenstermodus empfohlen. <kbd>Ctrl+Shift+R</kbd> zeigt das Rivale-Panel sofort.</p>
+      <p>Layout anpassen: Tray-Icon → <b>„Overlay position mode"</b> → Widgets (goldene Rahmen) einzeln ziehen → <kbd>Esc</kbd> speichert das Layout.</p>
+    </div>
+    <h2 id="help">Hilfe &amp; Anpassung</h2>
+    <div class="panel">
+      <p><b>Keine Daten?</b> App läuft? F1 26 streamt? Debug-Tab zeigt den Listener-Status — und die Statuslampe oben rechts zeigt, ob der Overlay-Server antwortet.</p>
+      <p><b>Anpassen:</b> Farben/Transparenz über CSS-Variablen in <code>overlay.css</code> (<code>--overlay-widget-bg</code> u. a.) — <a href="/overlay/README.md" style="color:#6ea8fe">README</a>.</p>
+      <p><b>Schwarz-Rot-Gold:</b> App → Einstellungen → Farbsschema „German"; HUD + alle Overlay-Seiten schwenken live um.</p>
+      <footer>ERCTelemetry — lokaler Overlay-Server (127.0.0.1), nichts exponiert ins Netzwerk.</footer>
+    </div>
+  </main>
+</div>
+<script>
+  var dot = document.getElementById('dot');
+  var st = document.getElementById('st');
+  function setStatus(cls, text) { dot.className = 'dot ' + cls; st.textContent = text; }
+  function connect() {
+    var ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
+    ws.onopen = function () { setStatus('on', 'Server live'); };
+    ws.onclose = function () { setStatus('off', 'Server nicht erreichbar'); setTimeout(connect, 3000); };
+    ws.onerror = function () { try { ws.close(); } catch (e) {} };
+  }
+  connect();
+</script>
+</body>
+</html>

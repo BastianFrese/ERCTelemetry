@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>ERCTelemetry — Head-to-Head</title>
+<link rel="stylesheet" href="overlay.css">
+<style>
+  /* Page-local: two-driver duel. Two columns (A left, B right) share a label
+     column — every block uses the same .h-grid so rows stay aligned. */
+  .row { display: flex; gap: 10px; align-items: flex-start; flex-wrap: wrap; }
+  .widget { width: 400px; }
+  .pickers { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .pickers select {
+    flex: 1; min-width: 0;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--overlay-text);
+    border: 1px solid var(--overlay-widget-border);
+    border-radius: 3px;
+    font: inherit; font-size: 12px;
+    padding: 2px 4px;
+  }
+  .pickers .vs { color: var(--overlay-muted); font-weight: 700; }
+  .note { color: var(--overlay-muted); font-style: italic; font-size: 12px; margin-bottom: 6px; }
+  .h-grid {
+    display: grid;
+    grid-template-columns: auto 1fr 1fr;
+    gap: 3px 10px;
+    align-items: baseline;
+    font-variant-numeric: tabular-nums;
+  }
+  .h-grid.two { grid-template-columns: auto 1fr; }
+  .h-grid .lbl {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--overlay-muted); white-space: nowrap;
+  }
+  .colhead { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .win { color: var(--overlay-throttle); font-weight: 700; }
+  .mono { font-family: var(--overlay-mono); }
+  .muted { color: var(--overlay-muted); }
+  .gap { font-size: 12px; }
+
+  /* header side badges */
+  .side-grid { display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; align-items: baseline; margin-top: 4px; }
+  .side { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+  .side.b { justify-content: flex-end; }
+  .side .pos {
+    font-family: 'Orbitron', 'Bahnschrift SemiBold Condensed', 'Bahnschrift', sans-serif;
+    font-size: 17px; font-weight: 700; color: var(--overlay-accent);
+  }
+  .side .name { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* sectors: status mark + time + delta vs. eigene Bestzeit */
+  .sec { display: flex; gap: 6px; align-items: baseline; }
+  .mark {
+    width: 8px; height: 8px; border-radius: 2px; flex: none;
+    background: rgba(255, 255, 255, 0.14);
+    display: inline-block; align-self: center;
+  }
+  .mark.green { background: var(--overlay-throttle); }
+  .mark.purple { background: #b361f5; }
+  .delta { font-size: 11px; }
+  .delta.gain { color: var(--overlay-throttle); }
+  .delta.loss { color: var(--overlay-brake); }
+
+  .mini { font-size: 12px; }
+  .tyre-row { display: flex; gap: 6px; align-items: center; }
+
+  /* marshal flags */
+  .flag-chip {
+    display: inline-block; font-size: 11px; font-weight: 700;
+    padding: 1px 7px; border-radius: 10px; margin: 0 6px 4px 0;
+    color: #0c0e14;
+  }
+  .flag-green  { background: var(--overlay-throttle); }
+  .flag-blue   { background: var(--overlay-ers); }
+  .flag-yellow { background: var(--overlay-tyre-medium); }
+</style>
+</head>
+<body>
+  <!-- pickers + position / name / gap -->
+  <div class="widget" id="h2h-header">
+    <div class="widget-title"><span>Head-to-Head</span></div>
+    <div class="pickers">
+      <select id="h2h-pick-a"></select>
+      <span class="vs">vs</span>
+      <select id="h2h-pick-b"></select>
+    </div>
+    <div class="note" id="h2h-note" hidden>Wähle zwei verschiedene Fahrer.</div>
+    <div class="side-grid">
+      <div class="side a">
+        <span class="pos" id="a-pos">–</span>
+        <span class="name" id="a-name">–</span>
+        <span class="mono muted gap" id="a-gap">–</span>
+      </div>
+      <span class="muted">·</span>
+      <div class="side b">
+        <span class="mono muted gap" id="b-gap">–</span>
+        <span class="name" id="b-name">–</span>
+        <span class="pos" id="b-pos">–</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- last + best lap, green on the faster side -->
+  <div class="widget" id="h2h-laps">
+    <div class="widget-title"><span>Letzte / Beste Runde</span></div>
+    <div class="h-grid">
+      <span class="lbl"></span><span class="colhead" id="a-col">–</span><span class="colhead" id="b-col">–</span>
+      <span class="lbl">Letzte Runde</span><span class="mono" id="a-last">–</span><span class="mono" id="b-last">–</span>
+      <span class="lbl">Beste Runde</span><span class="mono" id="a-best">–</span><span class="mono" id="b-best">–</span>
+    </div>
+  </div>
+
+  <!-- S1/S2/S3: status mark, time, delta vs. eigene Bestzeit -->
+  <div class="widget" id="h2h-sectors">
+    <div class="widget-title"><span>S1 / S2 / S3</span></div>
+    <div class="h-grid">
+      <span class="lbl">S1</span>
+      <span class="sec"><i class="mark" id="a-s1-mark"></i><span class="mono" id="a-s1-time">–</span><span class="mono delta" id="a-s1-delta"></span></span>
+      <span class="sec"><i class="mark" id="b-s1-mark"></i><span class="mono" id="b-s1-time">–</span><span class="mono delta" id="b-s1-delta"></span></span>
+      <span class="lbl">S2</span>
+      <span class="sec"><i class="mark" id="a-s2-mark"></i><span class="mono" id="a-s2-time">–</span><span class="mono delta" id="a-s2-delta"></span></span>
+      <span class="sec"><i class="mark" id="b-s2-mark"></i><span class="mono" id="b-s2-time">–</span><span class="mono delta" id="b-s2-delta"></span></span>
+      <span class="lbl">S3</span>
+      <span class="sec"><i class="mark" id="a-s3-mark"></i><span class="mono" id="a-s3-time">–</span><span class="mono delta" id="a-s3-delta"></span></span>
+      <span class="sec"><i class="mark" id="b-s3-mark"></i><span class="mono" id="b-s3-time">–</span><span class="mono delta" id="b-s3-delta"></span></span>
+    </div>
+  </div>
+
+  <!-- compound chip + age + wear -->
+  <div class="widget" id="h2h-tyres">
+    <div class="widget-title"><span>Reifen</span></div>
+    <div class="h-grid">
+      <span class="lbl"></span><span class="colhead" id="a-col2">–</span><span class="colhead" id="b-col2">–</span>
+      <span class="lbl">Mischung</span>
+      <span class="tyre-row"><span class="tyre unknown" id="a-tyre">–</span><span id="a-tyre-age" class="mini">–</span></span>
+      <span class="tyre-row"><span class="tyre unknown" id="b-tyre">–</span><span id="b-tyre-age" class="mini">–</span></span>
+      <span class="lbl">Verschleiß</span><span class="mini" id="a-wear">–</span><span class="mini" id="b-wear">–</span>
+    </div>
+  </div>
+
+  <!-- pit status + stop count -->
+  <div class="widget" id="h2h-pits">
+    <div class="widget-title"><span>Box</span></div>
+    <div class="h-grid">
+      <span class="lbl"></span><span class="colhead" id="a-col3">–</span><span class="colhead" id="b-col3">–</span>
+      <span class="lbl">Status</span><span class="mini" id="a-pit">–</span><span class="mini" id="b-pit">–</span>
+      <span class="lbl">Stopps</span><span class="mono" id="a-stops">–</span><span class="mono" id="b-stops">–</span>
+    </div>
+  </div>
+
+  <!-- head-to-head tally from the server -->
+  <div class="widget" id="h2h-tally">
+    <div class="widget-title"><span>Bilanz</span></div>
+    <div class="h-grid two">
+      <span class="lbl">Runden gewonnen</span><span class="mono" id="t-laps">– : –</span>
+      <span class="lbl">Positionen gewonnen</span><span class="mono" id="t-pos">– : –</span>
+    </div>
+  </div>
+
+  <noscript>JavaScript required for the live overlay.</noscript>
+
+  <script src="overlay.js"></script>
+  <script>
+    (function () {
+      'use strict';
+      var fmt = window.overlayFormat;
+      var $ = function (id) { return document.getElementById(id); };
+
+      // config keys per block id — missing keys mean visible
+      var BLOCK_KEYS = {
+        'h2h-header': 'h2h.header',
+        'h2h-laps': 'h2h.laps',
+        'h2h-sectors': 'h2h.sectors',
+        'h2h-tyres': 'h2h.tyres',
+        'h2h-pits': 'h2h.pits',
+        'h2h-tally': 'h2h.tally',
+      };
+      var dataVisible = { 'h2h-tally': true };
+
+      function updateBlocks() {
+        var cfg = window.overlayBlocks || {};
+        Object.keys(BLOCK_KEYS).forEach(function (id) {
+          var el = $(id);
+          if (!el) return;
+          var cfgOn = cfg[BLOCK_KEYS[id]] === undefined ? true : !!cfg[BLOCK_KEYS[id]];
+          el.hidden = !cfgOn || dataVisible[id] === false;
+        });
+      }
+
+      function setText(id, text) { $(id).textContent = text; }
+      function setCol(id, name) { $(id).textContent = name; }
+
+      // ---- selection state ----
+      var lastMsg = null;
+      var currentUid = null;
+      var pickerSig = null; // last standings signature the pickers were built from
+      var pickA = null; // carIndex
+      var pickB = null;
+      var rivalCarIndex = null; // remembered from ~30 Hz player frames
+
+      function rowFor(carIndex) {
+        var rows = (lastMsg && lastMsg.standings) || [];
+        for (var i = 0; i < rows.length; i++) {
+          if (rows[i].carIndex === carIndex) return rows[i];
+        }
+        return null;
+      }
+
+      function playerCarIndex() {
+        var s = lastMsg && lastMsg.session;
+        if (s && s.playerCarIndex !== undefined) return s.playerCarIndex;
+        var rows = (lastMsg && lastMsg.standings) || [];
+        for (var i = 0; i < rows.length; i++) {
+          if (rows[i].isPlayer) return rows[i].carIndex;
+        }
+        return null;
+      }
+
+      // the standings car nearest to the player: right behind, else right ahead
+      function nearestOtherCar(playerIdx) {
+        var rows = (lastMsg && lastMsg.standings) || [];
+        var pRow = rowFor(playerIdx);
+        var others = rows.filter(function (r) { return r.carIndex !== playerIdx; });
+        if (!others.length) return null;
+        if (!pRow) return others[0].carIndex;
+        var behind = others.filter(function (r) { return r.position > pRow.position; })
+          .sort(function (a, b) { return a.position - b.position; });
+        if (behind.length) return behind[0].carIndex;
+        var ahead = others.filter(function (r) { return r.position < pRow.position; })
+          .sort(function (a, b) { return b.position - a.position; });
+        return ahead.length ? ahead[0].carIndex : others[0].carIndex;
+      }
+
+      function ensureDefaults() {
+        if (pickA === null) pickA = playerCarIndex();
+        if (pickB === null) {
+          var rival = rivalCarIndex;
+          if (rival === null || rival === undefined || rival === pickA) {
+            rival = nearestOtherCar(pickA);
+          }
+          pickB = rival;
+        }
+      }
+
+      function fillSelect(sel, current) {
+        var rows = (lastMsg && lastMsg.standings) || [];
+        sel.textContent = '';
+        rows.forEach(function (r) {
+          var opt = document.createElement('option');
+          opt.value = r.carIndex;
+          opt.textContent = 'P' + r.position + ' ' + r.name;
+          sel.appendChild(opt);
+        });
+        if (current !== null && rowFor(current)) {
+          sel.value = String(current);
+        } else if (rows.length) {
+          sel.value = String(rows[0].carIndex);
+        }
+        return rows.length ? Number(sel.value) : current;
+      }
+
+      // Signature of the standings driver list — the pickers are only rebuilt when it
+      // changes, so an open dropdown no longer snaps shut during a live session.
+      function pickerSignature() {
+        var rows = (lastMsg && lastMsg.standings) || [];
+        return rows.map(function (r) {
+          return r.carIndex + ':' + r.position + ':' + r.name;
+        }).join('|');
+      }
+
+      // ---- per-side renderers (missing rows degrade to "–") ----
+      function dashSide(prefix) {
+        setText(prefix + '-pos', '–');
+        setText(prefix + '-name', '–');
+        setText(prefix + '-gap', '–');
+        setCol(prefix + '-col', '–');
+        setCol(prefix + '-col2', '–');
+        setCol(prefix + '-col3', '–');
+        for (var n = 1; n <= 3; n++) renderSector(prefix, n, null);
+        renderTyre(prefix, null, null);
+        renderPit(prefix, null);
+      }
+
+      function renderSide(prefix, carIndex) {
+        var row = carIndex === null || carIndex === undefined ? null : rowFor(carIndex);
+        if (!row) { dashSide(prefix); return; }
+        setText(prefix + '-pos', 'P' + row.position);
+        setText(prefix + '-name', row.name);
+        setText(prefix + '-gap', fmt.gap(row.gapToLeaderMs) || '–');
+        setCol(prefix + '-col', row.name);
+        setCol(prefix + '-col2', row.name);
+        setCol(prefix + '-col3', row.name);
+        for (var n = 1; n <= 3; n++) renderSector(prefix, n, row);
+        renderTyre(prefix, row.tyreCompound, row.tyreAgeLaps);
+        renderPit(prefix, row);
+      }
+
+      function renderSector(prefix, n, row) {
+        var time = row ? row['sector' + n + 'TimeMs'] : 0;
+        var best = row ? row['bestSector' + n + 'TimeMs'] : 0;
+        var status = row ? row['s' + n + 'Status'] : 'None';
+        $(prefix + '-s' + n + '-time').textContent = time > 0 ? fmt.lapTime(time) : '–';
+        var deltaEl = $(prefix + '-s' + n + '-delta');
+        if (time > 0 && best > 0) {
+          var d = time - best;
+          deltaEl.textContent = (d > 0 ? '+' : '') + (d / 1000).toFixed(3);
+          deltaEl.className = 'mono delta ' + (d > 0 ? 'loss' : 'gain');
+        } else {
+          deltaEl.textContent = '';
+          deltaEl.className = 'mono delta';
+        }
+        // exact wire strings, case-sensitive: "Green" / "Purple" / "None"
+        $(prefix + '-s' + n + '-mark').className = 'mark' +
+          (status === 'Green' ? ' green' : status === 'Purple' ? ' purple' : '');
+      }
+
+      function renderTyre(prefix, compound, ageLaps) {
+        var chip = $(prefix + '-tyre');
+        if (compound) {
+          chip.textContent = compound.replace(/^F1C/, 'C').replace(/^F1/, '');
+          chip.className = 'tyre ' + tyreClass(compound);
+        } else {
+          chip.textContent = '–';
+          chip.className = 'tyre unknown';
+        }
+        setText(prefix + '-tyre-age', compound ? ageLaps + ' Rd.' : '–');
+      }
+
+      function renderPit(prefix, row) {
+        var status = row ? row.pitStatus : null;
+        setText(prefix + '-pit', pitText(status));
+        setText(prefix + '-stops', row ? String(row.pitStops) : '–');
+      }
+
+      function tyreClass(c) {
+        if (/C5|C4|SOFT/i.test(c)) return 'tyre-soft';
+        if (/C3|C2|MEDIUM/i.test(c)) return 'tyre-medium';
+        if (/C1|C0|HARD|DRY/i.test(c)) return 'tyre-hard';
+        if (/INTER/i.test(c)) return 'tyre-inter';
+        if (/WET/i.test(c)) return 'tyre-wet';
+        return 'tyre-unknown';
+      }
+
+      function pitText(status) {
+        switch (status) {
+          case 'Pitting': return 'Boxenstopp';
+          case 'InPit': return 'In der Box';
+          case 'InPitLane': return 'Boxengasse';
+          default: return '–';
+        }
+      }
+
+      function wearFor(carIndex) {
+        var list = (lastMsg && lastMsg.tyres) || [];
+        for (var i = 0; i < list.length; i++) {
+          if (list[i].carIndex === carIndex) return list[i].wearPercent;
+        }
+        return null;
+      }
+
+      // ---- blocks ----
+      function renderLaps(aRow, bRow) {
+        var aLast = aRow ? aRow.lastLapTimeMs : 0;
+        var bLast = bRow ? bRow.lastLapTimeMs : 0;
+        var aBest = aRow ? aRow.bestLapTimeMs : 0;
+        var bBest = bRow ? bRow.bestLapTimeMs : 0;
+        $('a-last').textContent = aLast > 0 ? fmt.lapTime(aLast) : '–';
+        $('b-last').textContent = bLast > 0 ? fmt.lapTime(bLast) : '–';
+        $('a-best').textContent = aBest > 0 ? fmt.lapTime(aBest) : '–';
+        $('b-best').textContent = bBest > 0 ? fmt.lapTime(bBest) : '–';
+        markFaster('a-last', aLast, 'b-last', bLast);
+        markFaster('a-best', aBest, 'b-best', bBest);
+      }
+
+      function markFaster(idA, msA, idB, msB) {
+        $(idA).classList.toggle('win', msA > 0 && (msB <= 0 || msA < msB));
+        $(idB).classList.toggle('win', msB > 0 && (msA <= 0 || msB < msA));
+      }
+
+      function renderTyreWear(aIdx, bIdx) {
+        var aWear = wearFor(aIdx);
+        var bWear = wearFor(bIdx);
+        $('a-wear').textContent = aWear === null ? '–' : Math.round(aWear) + '%';
+        $('b-wear').textContent = bWear === null ? '–' : Math.round(bWear) + '%';
+      }
+
+      function renderTally(same) {
+        // one entry per pair, either orientation: orient it so "a" is pickA's side
+        var rows = (lastMsg && lastMsg.h2h) || [];
+        var tally = null;
+        for (var i = 0; i < rows.length; i++) {
+          var r = rows[i];
+          if (r.carIndex === pickA && r.opponentIndex === pickB) { tally = r; break; }
+          if (r.carIndex === pickB && r.opponentIndex === pickA) {
+            tally = {
+              lapsWon: r.opponentLapsWon,
+              positionWins: r.opponentPositionWins,
+              opponentLapsWon: r.lapsWon,
+              opponentPositionWins: r.positionWins,
+            };
+            break;
+          }
+        }
+        dataVisible['h2h-tally'] = !!(tally && !same);
+        $('t-laps').textContent = tally
+          ? tally.lapsWon + ' : ' + tally.opponentLapsWon
+          : '– : –';
+        $('t-pos').textContent = tally
+          ? tally.positionWins + ' : ' + tally.opponentPositionWins
+          : '– : –';
+      }
+
+      // ---- wiring ----
+      function onState(msg) {
+        lastMsg = msg;
+        var uid = msg.session ? msg.session.sessionUid : null;
+        if (uid !== currentUid) {
+          currentUid = uid; // new session → fall back to player vs rival
+          pickA = null;
+          pickB = null;
+        }
+        ensureDefaults();
+        var sig = pickerSignature();
+        if (sig !== pickerSig) {
+          pickerSig = sig;
+          pickA = fillSelect($('h2h-pick-a'), pickA);
+          pickB = fillSelect($('h2h-pick-b'), pickB);
+        }
+
+        var same = pickA === pickB;
+        // Show the collide note only once standings data has actually arrived.
+        $('h2h-note').hidden = !(same && ((lastMsg && lastMsg.standings) || []).length > 0);
+
+        renderSide('a', same ? null : pickA);
+        renderSide('b', same ? null : pickB);
+        renderLaps(same ? null : rowFor(pickA), same ? null : rowFor(pickB));
+        renderTyreWear(same ? null : pickA, same ? null : pickB);
+        renderTally(same);
+        updateBlocks();
+      }
+
+      window.connectOverlay({
+        onState: onState,
+        onPlayer: function (msg) {
+          if (msg.rival && msg.rival.carIndex !== undefined) {
+            rivalCarIndex = msg.rival.carIndex; // default side B before the first pick
+          }
+        },
+        onConfig: function () { updateBlocks(); },
+      });
+
+      $('h2h-pick-a').addEventListener('change', function () {
+        pickA = Number(this.value);
+        onState(lastMsg);
+      });
+      $('h2h-pick-b').addEventListener('change', function () {
+        pickB = Number(this.value);
+        onState(lastMsg);
+      });
+
+      updateBlocks();
+    })();
+  </script>
+</body>
+</html>

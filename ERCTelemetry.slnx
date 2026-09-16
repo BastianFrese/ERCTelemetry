@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="src/ERCTelemetry.Core/ERCTelemetry.Core.csproj" />
+  <Project Path="src/ERCTelemetry.App/ERCTelemetry.App.csproj" />
+  <Project Path="src/ERCTelemetry.ShareServer/ERCTelemetry.ShareServer.csproj" />
+  <Project Path="tests/ERCTelemetry.Core.Tests/ERCTelemetry.Core.Tests.csproj" />
+  <Project Path="tests/ERCTelemetry.ShareServer.Tests/ERCTelemetry.ShareServer.Tests.csproj" />
+</Solution>

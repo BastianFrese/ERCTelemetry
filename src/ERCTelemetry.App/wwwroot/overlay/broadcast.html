@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ERCTelemetry — Broadcast overlay</title>
+<link rel="stylesheet" href="overlay.css">
+<style>
+  /* Main broadcast page — everything on one screen, TV-look.
+     Designed for a 1920×1080 OBS browser source. */
+  .bcast {
+    position: fixed;
+    inset: 0;
+    padding: 14px;
+    display: grid;
+    grid-template-columns: 430px minmax(0, 1fr) 360px;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    gap: 10px;
+    pointer-events: none; /* pure stream overlay — never swallows game clicks */
+  }
+  .col { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+
+  /* ---- session strip ---- */
+  #strip { grid-column: 1 / -1; }
+  .strip-body {
+    display: flex;
+    align-items: baseline;
+    gap: 18px;
+    flex-wrap: wrap;
+    padding: 8px 14px;
+  }
+  .strip-title {
+    font-family: 'Orbitron', 'Bahnschrift SemiBold Condensed', 'Bahnschrift', sans-serif;
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .strip-item { font-size: 14px; color: var(--overlay-muted); white-space: nowrap; }
+  .strip-item b { color: var(--overlay-text); font-variant-numeric: tabular-nums; }
+  .strip-item.rain-wet b { color: var(--overlay-ers); }
+  .strip-item.strategy b { color: #ffce00; }
+  .strip-item.strategy-urgent b { color: #ff5a5a; }
+  .strip-item.fuel-ok b { color: var(--overlay-throttle); }
+  .strip-item.fuel-short b { color: #ff5a5a; }
+
+  /* ---- race recap overlay (session end) ---- */
+  #recap {
+    position: absolute; inset: 0; display: flex;
+    align-items: center; justify-content: center;
+    background: rgba(3, 4, 7, 0.78); z-index: 30;
+  }
+  #recap.hidden { display: none; }
+  .recap-card {
+    background: #0c1018; border: 1px solid #232833; border-radius: 10px;
+    padding: 22px 30px; min-width: 480px; color: var(--overlay-text);
+    box-shadow: 0 12px 44px rgba(0,0,0,0.55);
+  }
+  .recap-title { font-size: 20px; font-weight: 600; letter-spacing: 1px; margin-bottom: 12px; }
+  .recap-row { font-size: 15px; margin: 3px 0; }
+  .recap-row b { color: #ffce00; }
+  .recap-hint { margin-top: 10px; font-size: 11px; color: var(--overlay-muted); }
+
+  /* ---- timing tower ---- */
+  #tower-widget { overflow: hidden auto; min-height: 0; }
+  .b-tower { border-collapse: collapse; width: 100%; }
+  .b-tower th {
+    text-align: left; font-size: 10px; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--overlay-muted);
+    padding: 0 8px 5px 0;
+  }
+  .b-tower td {
+    padding: 3px 8px 3px 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    font-size: 13.5px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .b-tower .pos {
+    width: 26px; text-align: center; font-weight: 700;
+    background: rgba(255, 255, 255, 0.06);
+  }
+  .b-tower .name { max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
+  .b-tower .gap, .b-tower .st {
+    font-family: var(--overlay-mono); font-size: 12px; color: var(--overlay-muted);
+  }
+  .b-tower .leader td.gap { color: var(--overlay-text); font-weight: 700; }
+  .b-tower .battle td.gap { color: var(--overlay-tyre-medium); font-weight: 700; }
+  .b-tower .is-player td { background: rgba(225, 6, 0, 0.16); }
+  .b-tower .is-player td.pos { background: rgba(225, 6, 0, 0.35); }
+  .b-tower .is-out { opacity: 0.45; }
+  .b-tower .laptime { font-family: var(--overlay-mono); font-size: 12px; }
+  .b-tower .laptime.valid { color: var(--overlay-throttle); }
+  .b-tower .fl {
+    display: inline-block; background: #b13ad0; color: #fff;
+    font-size: 9px; font-weight: 800; padding: 0 4px; border-radius: 3px;
+  }
+  .b-tower .pit { font-size: 10px; font-weight: 800; color: var(--overlay-tyre-medium); }
+
+  /* current-lap sector marks: three tiny chips after the driver name */
+  .marks { display: inline-flex; gap: 3px; margin-left: 6px; vertical-align: 1px; }
+  .marks i {
+    width: 6px; height: 6px; border-radius: 1px;
+    background: rgba(255, 255, 255, 0.14);
+  }
+  .marks i.green { background: var(--overlay-throttle); }
+  .marks i.purple { background: #b361f5; }
+
+  /* ---- bottom player strip ---- */
+  #player-widget { grid-column: 2 / -1; grid-row: 3; min-width: 0; }
+  .p-strip {
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
+    gap: 10px 18px;
+    align-items: center;
+    padding: 10px 14px;
+  }
+  .p-speedrow { display: flex; align-items: baseline; gap: 12px; }
+  .p-pos { font-size: 15px; font-weight: 700; color: var(--overlay-muted); }
+  .p-speed {
+    font-family: 'Orbitron', 'Bahnschrift SemiBold Condensed', 'Bahnschrift', sans-serif;
+    font-size: 46px; font-weight: 800; line-height: 1;
+  }
+  .p-unit { font-size: 12px; color: var(--overlay-muted); }
+  .p-gear {
+    font-family: 'Orbitron', 'Bahnschrift SemiBold Condensed', 'Bahnschrift', sans-serif;
+    font-size: 34px; font-weight: 800; color: var(--overlay-accent); line-height: 1;
+  }
+  .p-pedals { display: flex; flex-direction: column; gap: 6px; }
+  .p-pedal { display: flex; align-items: center; gap: 8px; }
+  .p-pedal .pedal { width: 120px; height: 16px; flex: none; } /* mini vertical bars — overlay.css expects the 46px .pedals row */
+  .p-pedal .pedal-value { width: 38px; }
+  .p-mid { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+  .p-timing { display: flex; gap: 14px; font-size: 14px; align-items: baseline; flex-wrap: wrap; }
+  .p-timing .mono { font-family: var(--overlay-mono); }
+  .lap-delta { display: none; font-weight: 800; }
+  .lap-delta.up { display: inline; color: var(--overlay-brake); }
+  .lap-delta.down { display: inline; color: var(--overlay-throttle); }
+  .invalid-chip {
+    display: none;
+    font-size: 10px; font-weight: 800; letter-spacing: 0.08em;
+    color: var(--overlay-tyre-medium); border: 1px solid var(--overlay-tyre-medium); border-radius: 3px;
+    padding: 0 5px;
+  }
+  .invalid-chip.on { display: inline-block; }
+  .p-right { display: flex; flex-direction: column; gap: 8px; font-size: 14px; align-items: flex-end; }
+  .p-tyrerow { display: flex; align-items: center; gap: 10px; }
+  .p-meters { display: flex; gap: 16px; color: var(--overlay-muted); white-space: nowrap; }
+  .p-meters b { color: var(--overlay-text); font-variant-numeric: tabular-nums; }
+  .drs {
+    font-size: 12px; font-weight: 800; letter-spacing: 0.1em;
+    padding: 1px 8px; border-radius: 3px;
+    border: 1px solid rgba(255, 255, 255, 0.25); color: rgba(255, 255, 255, 0.35);
+  }
+  body.drs-on .drs { background: var(--overlay-throttle); border-color: var(--overlay-throttle); color: #06281a; }
+
+  /* ---- right column ---- */
+  #map-canvas {
+    display: block;
+    width: 100%;
+    height: 200px;
+    background: rgba(12, 16, 24, 0.45);
+    border-radius: 6px;
+  }
+  #events-widget { flex: 1; min-height: 0; overflow: hidden; }
+</style>
+</head>
+<body>
+  <div class="bcast">
+
+    <!-- top session strip -->
+    <div class="widget" id="strip">
+      <div class="strip-body">
+        <span class="strip-title" id="s-title">Waiting for telemetry…</span>
+        <span class="strip-item" id="s-clock"></span>
+        <span class="strip-item" id="s-weather"></span>
+        <span class="strip-item" id="s-forecast"></span>
+        <span class="strip-item" id="s-pit"></span>
+        <span class="strip-item strategy" id="s-strategy"></span>
+        <span class="strip-item" id="s-fuel"></span>
+      </div>
+    </div>
+
+    <!-- left: timing tower -->
+    <div class="widget" id="tower-widget">
+      <div class="widget-title">
+        <span>Timing</span>
+        <span class="muted" id="t-count"></span>
+      </div>
+      <table class="b-tower">
+        <thead>
+          <tr><th>Pos</th><th>Driver</th><th>Lap</th><th>Interval</th><th>St</th></tr>
+        </thead>
+        <tbody id="tower-body"></tbody>
+      </table>
+      <noscript>JavaScript required for the live overlay.</noscript>
+    </div>
+
+    <!-- bottom center/right: player strip -->
+    <div class="widget player-widget" id="player-widget">
+      <div class="p-strip">
+        <div class="p-speedrow">
+          <span class="p-pos" id="p-pos">–</span>
+          <span class="p-speed" id="p-speed">–</span>
+          <span class="p-unit">km/h</span>
+          <span class="p-gear" id="p-gear">–</span>
+        </div>
+        <div class="p-pedals">
+          <div class="p-pedal"><span class="pedal-label">T</span><div class="pedal throttle"><div class="fill" id="p-thr-bar"></div></div><span class="pedal-value" id="p-thr-pct">–</span></div>
+          <div class="p-pedal"><span class="pedal-label">B</span><div class="pedal brake"><div class="fill" id="p-brk-bar"></div></div><span class="pedal-value" id="p-brk-pct">–</span></div>
+          <div class="p-pedal"><span class="pedal-label">E</span><div class="pedal ers"><div class="fill" id="p-ers-bar"></div></div><span class="pedal-value" id="p-ers-pct">–</span></div>
+        </div>
+        <div class="p-mid">
+          <div class="p-timing">
+            <span class="invalid-chip" id="p-invalid">LAP INVALID</span>
+            <span>lap <b id="p-lap">–</b></span>
+            <span class="muted">last</span><span class="mono" id="p-last">–</span>
+            <span class="muted">best</span><span class="mono" id="p-best">–</span>
+            <span class="spacer"></span>
+            <span class="mono" id="p-gap">–</span>
+          </div>
+          <div class="rpm-bar"><div class="fill" id="p-rpm-bar"></div></div>
+        </div>
+        <div class="p-right">
+          <div class="p-tyrerow">
+            <span class="drs" id="p-drs">DRS</span>
+            <span class="tyre unknown" id="p-tyre">–</span>
+            <span><b id="p-tyre-age">–</b> <span class="muted">laps</span></span>
+          </div>
+          <div class="p-meters">
+            <span>fuel <b id="p-fuel">–</b> kg</span>
+            <span><b id="p-fuel-laps">–</b> <span class="muted">laps left</span></span>
+            <span id="p-ers-mode">–</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- right column: map + race control -->
+    <div class="col" style="grid-column: 3; grid-row: 2;">
+      <div class="widget" id="map-widget">
+        <div class="widget-title"><span id="map-title">Track map</span></div>
+        <canvas id="map-canvas" width="340" height="200"></canvas>
+      </div>
+
+      <div class="widget" id="events-widget">
+        <div class="widget-title"><span>Race control</span></div>
+        <ul class="events" id="event-list"></ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- end-of-race recap overlay (shown on session-ended, auto-hides after 30 s) -->
+  <div id="recap" class="hidden">
+    <div class="recap-card">
+      <div class="recap-title" id="r-title">RACE · FINISH</div>
+      <div class="recap-row" id="r-pod"></div>
+      <div class="recap-row" id="r-fl"></div>
+      <div class="recap-row" id="r-mover"></div>
+      <div class="recap-row" id="r-out"></div>
+      <div class="recap-hint">Klick schließt das Panel · erscheint automatisch bei Rennende</div>
+    </div>
+  </div>
+
+  <script src="overlay.js"></script>
+  <script>
+    (function () {
+      'use strict';
+      var fmt = window.overlayFormat;
+      var $ = function (id) { return document.getElementById(id); };
+
+      // block visibility — config keys per widget id; missing keys mean visible.
+      // Map/tower/player widgets have no matching block key and always show.
+      var BLOCK_KEYS = {
+        'strip': 'com.session',
+        'events-widget': 'com.flags',
+      };
+      function updateBlocks() {
+        var cfg = window.overlayBlocks || {};
+        Object.keys(BLOCK_KEYS).forEach(function (id) {
+          var el = document.getElementById(id);
+          if (!el) return;
+          var cfgOn = cfg[BLOCK_KEYS[id]] === undefined ? true : !!cfg[BLOCK_KEYS[id]];
+          el.hidden = !cfgOn;
+        });
+      }
+
+      /* ---------- session strip ---------- */
+      function renderStrip(s) {
+        if (!s) return;
+        var laps = s.totalLaps > 0 ? s.totalLaps + ' laps'
+          : Math.floor(s.sessionTimeLeft / 60) + ':' + String(s.sessionTimeLeft % 60).padStart(2, '0');
+        $('s-title').textContent = s.sessionType + ' · ' + s.track;
+        $('s-clock').innerHTML = '<b>' + laps + '</b>';
+
+        $('s-weather').innerHTML =
+          s.weather + ' · air <b>' + s.airTemperature + '°</b> · track <b>' + s.trackTemperature + '°</b>';
+
+        // first rain-relevant forecast sample
+        var rain = null;
+        (s.forecast || []).forEach(function (f) {
+          if (!rain && f.rainPercent > 0) rain = f;
+        });
+        var fc = $('s-forecast');
+        if (rain) {
+          fc.innerHTML = '~<b>' + rain.rainPercent + '%</b> rain in ' + rain.timeOffsetMinutes + ' min';
+          fc.className = 'strip-item' + (rain.rainPercent >= 50 ? ' rain-wet' : '');
+        } else {
+          fc.textContent = '';
+        }
+
+        var pit = $('s-pit');
+        if (s.pitWindowIdealLap > 0) {
+          pit.innerHTML = 'pit window <b>L' + s.pitWindowIdealLap + '–L' + s.pitWindowLatestLap + '</b>';
+          pit.className = 'strip-item';
+        } else {
+          pit.textContent = '';
+        }
+
+        // strategy advice chip (tyres wear trend → laps left + suggested pit lap)
+        var st = $('s-strategy');
+        var adv = s.strategy;
+        if (adv && adv.tyreLapsLeft >= 0 && adv.suggestedPitLap > 0) {
+          st.innerHTML = 'tyres ~<b>' + adv.tyreLapsLeft + '</b> laps → pit <b>L' +
+            adv.suggestedPitLap + '</b>';
+          st.className = 'strip-item strategy' +
+            (adv.tyreLapsLeft <= 2 ? ' strategy-urgent' : '');
+        } else {
+          st.textContent = '';
+        }
+
+        // fuel-to-finish chip: red when the tank won't cover the remaining laps
+        var fuel = $('s-fuel');
+        var fu = s.fuel;
+        if (fu && fu.shortfallLaps > 0) {
+          fuel.innerHTML = 'fuel <b>+' + fu.litresToFuel.toFixed(1) + ' L</b> to finish';
+          fuel.className = 'strip-item fuel-short';
+        } else if (fu && fu.shortfallLaps < 0) {
+          fuel.innerHTML = 'fuel <b>' + (-fu.shortfallLaps) + ' lap(s) spare</b>';
+          fuel.className = 'strip-item fuel-ok';
+        } else {
+          fuel.textContent = '';
+        }
+      }
+
+      /* ---------- timing tower ---------- */
+      var fastestOverallMs = 0;
+
+      function tyreText(c) { return c.replace(/^F1C/, 'C').replace(/^F1/, ''); }
+      function tyreClass(c) {
+        if (/C5|C4|SOFT/i.test(c)) return 'tyre-soft';
+        if (/C3|C2|MEDIUM/i.test(c)) return 'tyre-medium';
+        if (/C1|C0|HARD|DRY/i.test(c)) return 'tyre-hard';
+        if (/INTER/i.test(c)) return 'tyre-inter';
+        if (/WET/i.test(c)) return 'tyre-wet';
+        return 'tyre-unknown';
+      }
+
+      function sectorMarks(row) {
+        var out = '<span class="marks">';
+        ['s1Status', 's2Status', 's3Status'].forEach(function (key) {
+          var v = row[key];
+          out += '<i class="' + (v === 'Purple' ? 'purple' : v === 'Green' ? 'green' : '') + '"></i>';
+        });
+        return out + '</span>';
+      }
+
+      function interval(row) {
+        if (row.pitStatus === 'Pitting') return '<span class="pit">PIT</span>';
+        if (row.pitStatus === 'InPit') return '<span class="pit">IN PIT</span>';
+        return fmt.gap(row.gapToLeaderMs);
+      }
+
+      function lapCell(row) {
+        var time = row.lastLapTimeMs > 0 ? fmt.lapTime(row.lastLapTimeMs) : fmt.lapTime(row.currentLapTimeMs);
+        return '<span class="laptime' + (row.lapValidity === 1 ? '' : ' valid') + '">' + (time || '–') + '</span>';
+      }
+
+      function renderTower(msg) {
+        var rows = msg.standings || [];
+        rows.forEach(function (r) {
+          if (r.bestLapTimeMs > 0 &&
+              (fastestOverallMs === 0 || r.bestLapTimeMs < fastestOverallMs)) {
+            fastestOverallMs = r.bestLapTimeMs;
+          }
+        });
+        $('t-count').textContent = rows.length + ' cars';
+
+        var body = $('tower-body');
+        body.innerHTML = '';
+        rows.forEach(function (row, i) {
+          var tr = document.createElement('tr');
+          var cls = [];
+          if (row.isPlayer) cls.push('is-player');
+          if (row.resultStatus === 'Retired' || row.resultStatus === 'DidNotFinish') cls.push('is-out');
+          if (i === 0) cls.push('leader');
+          if (i > 0 && row.gapToCarInFrontMs > 0 && row.gapToCarInFrontMs < 1000) cls.push('battle');
+          if (cls.length) tr.className = cls.join(' ');
+          tr.innerHTML =
+            '<td class="pos">' + row.position + '</td>' +
+            '<td class="name">' + row.name +
+              (row.bestLapTimeMs > 0 && row.bestLapTimeMs === fastestOverallMs ? ' <span class="fl">FL</span>' : '') +
+              sectorMarks(row) +
+            '</td>' +
+            '<td>' + lapCell(row) + '</td>' +
+            '<td class="gap">' + interval(row) + '</td>' +
+            '<td class="st">' + (row.pitStops > 0 ? row.pitStops : '') + '</td>';
+          body.appendChild(tr);
+        });
+      }
+
+      /* ---------- player strip (state-rate parts) ---------- */
+      function renderPlayerState(msg) {
+        var row = null;
+        (msg.standings || []).forEach(function (r) {
+          if (r.isPlayer) row = r;
+        });
+
+        $('p-pos').textContent = row ? 'P' + row.position : '–';
+        $('p-lap').textContent = row ? row.currentLapNum : '–';
+        $('p-last').textContent = row ? (fmt.lapTime(row.lastLapTimeMs) || '–') : '–';
+        $('p-best').textContent = row ? (fmt.lapTime(row.bestLapTimeMs) || '–') : '–';
+        $('p-gap').textContent = row ? fmt.gap(row.gapToLeaderMs) : '–';
+        $('p-invalid').className = 'invalid-chip' + (row && row.lapValidity === 1 ? ' on' : '');
+        var delta = $('p-lapdelta');
+        if (row && row.lapDeltaMs) {
+          delta.textContent = 'Δ ' + (row.lapDeltaMs > 0 ? '+' : '−') +
+            (Math.abs(row.lapDeltaMs) / 1000).toFixed(3);
+          delta.className = 'mono lap-delta ' + (row.lapDeltaMs > 0 ? 'up' : 'down');
+        } else {
+          delta.textContent = '';
+          delta.className = 'mono lap-delta';
+        }
+      }
+
+      /* ---------- player strip (30 Hz frame) ---------- */
+      function fillPlayer(frame) {
+        $('p-speed').textContent = frame.speed;
+        $('p-gear').textContent = frame.gear < 0 ? 'R' : String(frame.gear);
+        $('p-rpm-bar').style.width = fmt.pct(frame.engineRpm / 12000 * 100);
+        $('p-thr-bar').style.width = fmt.pct(frame.throttle * 100);
+        $('p-brk-bar').style.width = fmt.pct(frame.brake * 100);
+        $('p-ers-bar').style.width = fmt.pct(frame.ersPercent);
+        $('p-thr-pct').textContent = Math.round(frame.throttle * 100) + '%';
+        $('p-brk-pct').textContent = Math.round(frame.brake * 100) + '%';
+        $('p-ers-pct').textContent = Math.round(frame.ersPercent) + '%';
+        $('p-ers-mode').textContent = 'ERS: ' + frame.ersDeployMode;
+        $('p-fuel').textContent = frame.fuelInTank.toFixed(1);
+        $('p-fuel-laps').textContent = frame.fuelRemainingLaps.toFixed(1);
+
+        var tyre = $('p-tyre');
+        tyre.textContent = tyreText(frame.tyreCompound);
+        tyre.className = 'tyre ' + tyreClass(frame.tyreCompound);
+        $('p-tyre-age').textContent = frame.tyreAgeLaps;
+
+        document.body.classList.toggle('drs-on', frame.drsOn || frame.drsAllowed);
+      }
+
+      /* ---------- minimap (self-learning track outline, see overlay.js) ---------- */
+      var map = overlayMap.create($('map-canvas'), $('map-title'));
+      var uid = null; // last sessionUid — a new session closes the recap
+
+      /* ---------- race control feed ---------- */
+      var MAX_EVENTS = 8;
+      var lastResults = null;
+
+      // ---------- sound alerts (WebAudio beeps on key events) ----------
+      var audioCtx = null;
+      function beep(freqHz, totalMs) {
+        try {
+          if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          var t0 = audioCtx.currentTime;
+          var osc = audioCtx.createOscillator();
+          var gain = audioCtx.createGain();
+          osc.type = 'sine';
+          osc.frequency.value = freqHz;
+          gain.gain.setValueAtTime(0.12, t0);
+          gain.gain.exponentialRampToValueAtTime(0.0001, t0 + totalMs / 1000);
+          osc.connect(gain).connect(audioCtx.destination);
+          osc.start(t0);
+          osc.stop(t0 + totalMs / 1000);
+        } catch (e) { /* audio blocked/unavailable — alerts stay silent */ }
+      }
+      function eventSound(type) {
+        switch (type) {
+          case 'fastest-lap':     beep(1180, 120); break;
+          case 'personal-best':   beep(1320, 90); setTimeout(function () { beep(1760, 110); }, 100); break;
+          case 'retirement':      beep(320, 260);  break;
+          case 'race-winner':     beep(880, 110); setTimeout(function () { beep(1180, 140); }, 130); break;
+          case 'session-ended':   beep(660, 130); setTimeout(function () { beep(520, 180); }, 150); break;
+        }
+      }
+      var MAX_EVENTS = 8;
+      function typeLabel(ev) {
+        switch (ev.type) {
+          case 'fastest-lap': return 'FL';
+          case 'personal-best': return 'PB';
+          case 'retirement': return 'RET';
+          case 'penalty': return 'PEN';
+          case 'race-winner': return 'WIN';
+          case 'session-started': return 'GO';
+          case 'session-ended': return 'END';
+          default: return '·';
+        }
+      }
+
+      function pushEvent(msg) {
+        eventSound(msg.type);
+
+        if (msg.type === 'session-ended') {
+          showRecap();
+        }
+        if (msg.type === 'session-started') {
+          hideRecap();
+        }
+
+        var list = $('event-list');
+        var li = document.createElement('li');
+        li.className = 'event event-' + msg.type;
+        li.innerHTML =
+          '<span class="badge">' + typeLabel(msg) + '</span>' +
+          '<span class="text">' + msg.text + '</span>';
+        list.insertBefore(li, list.firstChild); // newest on top
+        while (list.children.length > MAX_EVENTS) {
+          list.removeChild(list.lastChild);
+        }
+      }
+
+      /* ---------- wiring ---------- */
+      function showRecap() {
+        if (!lastResults || lastResults.length === 0) {
+          return; // no classification (e.g. practice) — feed + sound suffice
+        }
+
+        var winner = lastResults[0];
+        var fl = null;
+        var mover = null;
+        (lastResults || []).forEach(function (r) {
+          if (r.bestLapTimeMs > 0 && (!fl || r.bestLapTimeMs < fl.bestLapTimeMs)) fl = r;
+          if (r.gridPosition && r.gridPosition < 250) {
+            var gained = r.gridPosition - r.position;
+            if (gained > 0 && (!mover || gained > mover.gained)) {
+              mover = { name: r.name, gained: gained, pos: r.position };
+            }
+          }
+        });
+
+        var retired = lastResults.filter(function (r) {
+          return r.resultStatus === 'Retired' || r.resultStatus === 'DidNotFinish';
+        });
+        $('r-title').textContent = 'RACE · FINISH';
+        $('r-pod').innerHTML = '<b>P' + winner.position + '</b> ' + winner.name;
+        $('r-fl').innerHTML = fl
+          ? 'Fastest lap <b>' + window.overlayFormat.lapTime(fl.bestLapTimeMs) + '</b> — ' + fl.name
+          : '';
+        $('r-mover').textContent = '';
+        $('r-mover').innerHTML = mover
+          ? 'Biggest mover <b>P' + mover.pos + '</b> ' + mover.name + ' (+' + mover.gained + ')'
+          : '';
+        $('r-out').textContent = retired.length > 0
+          ? retired.length + ' retired: ' + retired.slice(0, 3).map(function (r) { return r.name; }).join(', ') +
+            (retired.length > 3 ? ' …' : '')
+          : '';
+        el.classList.remove('hidden');
+        clearTimeout(showRecap._t);
+        showRecap._t = setTimeout(hideRecap, 30000); // auto-hide after 30 s
+      }
+
+      function hideRecap() {
+        clearTimeout(showRecap._t);
+        var el = $('recap');
+        if (el) el.classList.add('hidden');
+      }
+
+      window.connectOverlay({
+        onState: function (msg) {
+          updateBlocks();
+          renderStrip(msg.session);
+          renderTower(msg);
+          renderPlayerState(msg);
+          if (msg.results && msg.results.length > 0) lastResults = msg.results;
+          map.onState(msg);
+          if (msg.session && msg.session.sessionUid !== undefined && msg.session.sessionUid !== uid) {
+            uid = msg.session.sessionUid;
+            hideRecap(); // a new session always closes the recap
+          }
+        },
+        onPlayer: function (msg) {
+          if (msg.player) {
+            fillPlayer(msg.player);
+          } else {
+            $('p-speed').textContent = '–';
+          }
+        },
+        onMap: function (msg) { map.onMap(msg.positions); },
+        onLayout: function (msg) { map.onLayout(msg); },
+        onConfig: function () { updateBlocks(); },
+        onEvent: pushEvent,
+      });
+
+      // click anywhere on the recap closes it
+      document.getElementById('recap').addEventListener('click', hideRecap);
+    })();
+  </script>
+</body>
+</html>

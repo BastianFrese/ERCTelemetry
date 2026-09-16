@@ -1,0 +1,29 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- Classic HUD palette — erdi-erc.de dark tokens (broadcast-identical).
+         Keys are a fixed contract: InGameOverlayWindow applies the scheme by
+         swapping this dictionary at merge index; consumers read via DynamicResource. -->
+    <SolidColorBrush x:Key="HudBg" Color="#EA030407" />
+    <SolidColorBrush x:Key="HudBorder" Color="#232833" />
+    <SolidColorBrush x:Key="HudText" Color="#F4F6FB" />
+    <SolidColorBrush x:Key="HudMuted" Color="#B8BFCB" />
+    <SolidColorBrush x:Key="HudAccent" Color="#FF2A14" />
+    <SolidColorBrush x:Key="HudBarTrack" Color="#14FFFFFF" />
+    <SolidColorBrush x:Key="HudThrottle" Color="#35D07F" />
+    <SolidColorBrush x:Key="HudBrake" Color="#FF5A4E" />
+    <SolidColorBrush x:Key="HudErs" Color="#6EA8FE" />
+    <SolidColorBrush x:Key="HudDRS" Color="#6EA8FE" />
+    <SolidColorBrush x:Key="HudGold" Color="#F3D02F" />
+    <SolidColorBrush x:Key="HudGreen" Color="#35D07F" />
+    <SolidColorBrush x:Key="HudRed" Color="#FF5A4E" />
+    <SolidColorBrush x:Key="HudPurple" Color="#B45CFF" />
+
+    <!-- RPM bar fill: green → gold → red (replaces the overlay's old hardcoded
+         GradientStops, which bypassed the scheme swap and broke RPM-gold consistency
+         in the German scheme next to the #FFCE00 throttle). -->
+    <LinearGradientBrush x:Key="HudRpmGradient" StartPoint="0,0" EndPoint="1,0">
+        <GradientStop Color="#35D07F" Offset="0" />
+        <GradientStop Color="#F3D02F" Offset="0.6" />
+        <GradientStop Color="#FF5A4E" Offset="1" />
+    </LinearGradientBrush>
+</ResourceDictionary>

@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ERCTelemetry — Minimap overlay</title>
+<link rel="stylesheet" href="overlay.css">
+<style>
+  #map-canvas {
+    display: block;
+    width: 340px;
+    height: 200px;
+    background: rgba(12, 16, 24, 0.45);
+    border-radius: 6px;
+  }
+</style>
+</head>
+<body>
+  <div class="widget" id="map-widget">
+    <div class="widget-title">
+      <span id="map-title">Waiting for telemetry…</span>
+    </div>
+    <canvas id="map-canvas" width="340" height="200"></canvas>
+    <noscript>JavaScript required for the live overlay.</noscript>
+  </div>
+  <script src="overlay.js"></script>
+  <script>
+    (function () {
+      'use strict';
+      var map = overlayMap.create(document.getElementById('map-canvas'), document.getElementById('map-title'));
+      window.connectOverlay({
+        onState: function (msg) { map.onState(msg); },
+        onMap: function (msg) { map.onMap(msg.positions); },
+        onLayout: function (msg) { map.onLayout(msg); }
+      });
+    })();
+  </script>
+</body>
+</html>

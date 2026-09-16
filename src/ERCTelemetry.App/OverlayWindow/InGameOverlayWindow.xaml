@@ -1,0 +1,365 @@
+<Window x:Class="ERCTelemetry.App.OverlayWindow.InGameOverlayWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xml:lang="en-US"
+        Title="ERCTelemetry In-Game Overlay"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        ShowInTaskbar="False" ShowActivated="False"
+        Topmost="True"
+        ResizeMode="NoResize"
+        FontFamily="Segoe UI">
+
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <!-- Swapped at runtime in ApplyHudSettings: classic ↔ German (black-red-gold) -->
+                <ResourceDictionary Source="HudColors.Classic.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+            <!-- Display font for the hero digits (speed/gear/position); embedded in the
+                 app assembly, so it resolves offline. Data cells stay Cascadia Mono. -->
+            <FontFamily x:Key="HudDisplayFont">pack://application:,,,/ERCTelemetry.App;Component/Fonts/#Orbitron</FontFamily>
+            <!-- Hero-speed glow: scheme-neutral red (works over both Classic and German
+                 palettes; single element, so the blur cost is contained). -->
+            <DropShadowEffect x:Key="HudSpeedGlow" Color="#E10600" BlurRadius="18"
+                              ShadowDepth="0" Opacity="0.75" />
+        </ResourceDictionary>
+    </Window.Resources>
+
+    <!-- Canvas across the whole work area: each widget is its own Border, freely
+         placeable by drag (position mode) — positions persist per widget id. -->
+    <Canvas x:Name="HudCanvas">
+
+        <!-- timing: position · name · grid delta · gap -->
+        <Border x:Name="WdgTiming"
+                Background="{DynamicResource HudBg}"
+                BorderBrush="{DynamicResource HudBorder}"
+                BorderThickness="1"
+                CornerRadius="8" Padding="12,8"
+                MinWidth="250">
+            <StackPanel>
+                <Grid x:Name="TimingRow">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="PositionText" Grid.Column="0"
+                           Text="—" FontSize="24" FontWeight="Bold" Foreground="{DynamicResource HudAccent}"
+                           FontFamily="{DynamicResource HudDisplayFont}" />
+                <TextBlock x:Name="DriverNameText" Grid.Column="1" Margin="10,0,10,0"
+                           Text="" FontSize="14" FontWeight="SemiBold"
+                           Foreground="{DynamicResource HudText}" VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis" />
+                <StackPanel Grid.Column="2" Orientation="Horizontal">
+                    <TextBlock x:Name="GridDeltaText"
+                               Text="" FontSize="12" FontWeight="Bold" Margin="0,0,8,0"
+                               Foreground="{DynamicResource HudMuted}" VerticalAlignment="Center" />
+                    <TextBlock x:Name="GapText"
+                               Text="" FontSize="14" FontWeight="SemiBold"
+                               FontFamily="Cascadia Mono, Consolas"
+                               Foreground="{DynamicResource HudText}" VerticalAlignment="Center" />
+                    <TextBlock x:Name="BackText"
+                               Text="" FontSize="12" FontWeight="SemiBold" Margin="8,0,0,0"
+                               FontFamily="Cascadia Mono, Consolas"
+                               Foreground="{DynamicResource HudMuted}" VerticalAlignment="Center" />
+                </StackPanel>
+            </Grid>
+            <Grid x:Name="LapsRow" Margin="0,5,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="LastLapText" HorizontalAlignment="Left"
+                           Text="" FontSize="12" FontFamily="Cascadia Mono, Consolas"
+                           Foreground="{DynamicResource HudText}" />
+                <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                    <TextBlock x:Name="LapDeltaText" Margin="0,0,8,0"
+                               Text="" FontSize="12" FontWeight="Bold"
+                               FontFamily="Cascadia Mono, Consolas" />
+                    <TextBlock x:Name="BestLapText"
+                               Text="" FontSize="12" FontFamily="Cascadia Mono, Consolas"
+                               Foreground="{DynamicResource HudMuted}" />
+                </StackPanel>
+            </Grid>
+            <!-- live sector delta: S1/S2/S3 vs the driver's own best sectors (green/red) -->
+            <TextBlock x:Name="SectorDeltaText" Margin="0,3,0,0"
+                       Text="" FontSize="12" FontFamily="Cascadia Mono, Consolas"
+                       Foreground="{DynamicResource HudMuted}" />
+                <TextBlock x:Name="NoTelemetryText"
+                           Text="waiting for telemetry…"
+                           FontSize="12" FontStyle="Italic"
+                           Foreground="{DynamicResource HudMuted}"
+                           Margin="0,4,0,0" />
+            </StackPanel>
+        </Border>
+
+        <!-- drive: speed · gear · rpm · pedals · ERS % -->
+        <Border x:Name="WdgDrive"
+                Background="{DynamicResource HudBg}"
+                BorderBrush="{DynamicResource HudBorder}"
+                BorderThickness="1"
+                CornerRadius="8" Padding="12,8">
+            <StackPanel x:Name="HudStack">
+                <Grid x:Name="DriveRow">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock x:Name="SpeedText" Text="0" FontSize="42" FontWeight="Bold"
+                                   Foreground="{DynamicResource HudText}"
+                                   Effect="{StaticResource HudSpeedGlow}"
+                                   FontFamily="{DynamicResource HudDisplayFont}" />
+                        <TextBlock Text="km/h" FontSize="12" Foreground="{DynamicResource HudMuted}"
+                                   VerticalAlignment="Bottom" Margin="6,0,0,8" />
+                    </StackPanel>
+                    <TextBlock x:Name="GearText" Grid.Column="1" Text="N" FontSize="34" FontWeight="Bold"
+                               Foreground="{DynamicResource HudAccent}" VerticalAlignment="Center"
+                               FontFamily="{DynamicResource HudDisplayFont}" />
+                </Grid>
+
+                <!-- The RPM fill gradient is scheme-aware (HudRpmGradient lives in BOTH
+                     HudColors dictionaries); hardcoding the stops here bypassed the swap
+                     and made the German scheme show Classic gold next to #FFCE00 throttle. -->
+                <Border x:Name="RpmRow" Height="8" CornerRadius="3" Background="{DynamicResource HudBarTrack}" Margin="0,8,0,0">
+                    <Border x:Name="RpmFill" HorizontalAlignment="Left" Width="0" CornerRadius="3"
+                            Background="{DynamicResource HudRpmGradient}" />
+                </Border>
+
+                <Grid x:Name="ThrRow" Margin="0,8,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="6" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="THR" FontSize="10" Foreground="{DynamicResource HudMuted}"
+                               VerticalAlignment="Center" />
+                    <Border Grid.Column="2" Height="8" CornerRadius="3" Background="{DynamicResource HudBarTrack}">
+                        <Border x:Name="ThrottleFill" HorizontalAlignment="Left" Width="0"
+                                CornerRadius="3" Background="{DynamicResource HudThrottle}">
+                            <!-- 1px top gloss line: the fills read as glossy gauge bars. -->
+                            <Rectangle Height="1" VerticalAlignment="Top" Fill="#3DFFFFFF" />
+                        </Border>
+                    </Border>
+                </Grid>
+
+                <Grid x:Name="BrkRow" Margin="0,4,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="6" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="BRK" FontSize="10" Foreground="{DynamicResource HudMuted}"
+                               VerticalAlignment="Center" />
+                    <Border Grid.Column="2" Height="8" CornerRadius="3" Background="{DynamicResource HudBarTrack}">
+                        <Border x:Name="BrakeFill" HorizontalAlignment="Left" Width="0"
+                                CornerRadius="3" Background="{DynamicResource HudBrake}">
+                            <Rectangle Height="1" VerticalAlignment="Top" Fill="#3DFFFFFF" />
+                        </Border>
+                    </Border>
+                </Grid>
+
+                <Grid x:Name="ErsRow" Margin="0,4,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="6" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="ERS" FontSize="10" Foreground="{DynamicResource HudMuted}"
+                               VerticalAlignment="Center" />
+                    <Border Grid.Column="2" Height="8" CornerRadius="3" Background="{DynamicResource HudBarTrack}">
+                        <Border x:Name="ErsFill" HorizontalAlignment="Left" Width="0"
+                                CornerRadius="3" Background="{DynamicResource HudErs}">
+                            <Rectangle Height="1" VerticalAlignment="Top" Fill="#3DFFFFFF" />
+                        </Border>
+                    </Border>
+                    <TextBlock x:Name="ErsText" Grid.Column="3" Text="0%" FontSize="10"
+                               Foreground="{DynamicResource HudMuted}" VerticalAlignment="Center"
+                               Margin="6,0,0,0" />
+                </Grid>
+            </StackPanel>
+        </Border>
+
+        <!-- status: DRS · tyre · fuel · weather -->
+        <Border x:Name="WdgStatus"
+                Background="{DynamicResource HudBg}"
+                BorderBrush="{DynamicResource HudBorder}"
+                BorderThickness="1"
+                CornerRadius="8" Padding="12,8">
+            <StackPanel>
+                <Grid x:Name="StatusRow">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock x:Name="DrsText" Text="DRS" FontSize="11" FontWeight="Bold"
+                               Foreground="{DynamicResource HudMuted}" VerticalAlignment="Center" />
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right">
+                        <TextBlock x:Name="TyreText" Text="—" FontSize="12" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource HudText}" VerticalAlignment="Center" />
+                        <TextBlock x:Name="TyreAgeText" Text="" FontSize="11"
+                                   Foreground="{DynamicResource HudMuted}" VerticalAlignment="Center"
+                                   Margin="6,0,0,0" />
+                        <TextBlock x:Name="FuelText" Text="" FontSize="11"
+                                   Foreground="{DynamicResource HudMuted}" VerticalAlignment="Center"
+                                   Margin="10,0,0,0" />
+                    </StackPanel>
+                </Grid>
+                <TextBlock x:Name="WeatherRow" Text="" FontSize="11"
+                           Foreground="{DynamicResource HudMuted}" Margin="0,6,0,0"
+                           Visibility="Collapsed" />
+                <Canvas x:Name="WeatherRadarCanvas" Height="16" Margin="0,4,0,0"
+                        Visibility="Collapsed" />
+                <TextBlock x:Name="StrategyRow" Text="" FontSize="11"
+                           Foreground="{DynamicResource HudGold}" Margin="0,2,0,0"
+                           Visibility="Collapsed" />
+            </StackPanel>
+        </Border>
+
+        <!-- minimap: session-scoped auto-scaling dots -->
+        <Border x:Name="WdgMap"
+                Background="{DynamicResource HudBg}"
+                BorderBrush="{DynamicResource HudBorder}"
+                BorderThickness="1"
+                CornerRadius="8" Padding="10"
+                Visibility="Collapsed">
+            <Canvas x:Name="MapRow" Width="296" Height="170" ClipToBounds="True">
+                <Canvas x:Name="MapCanvas" />
+            </Canvas>
+        </Border>
+
+        <!-- radar: 360° proximity radar (Assetto-Corsa style), drawn relative to the player -->
+        <Border x:Name="WdgRadar"
+                Background="{DynamicResource HudBg}"
+                BorderBrush="{DynamicResource HudBorder}"
+                BorderThickness="1"
+                CornerRadius="8" Padding="10,6"
+                Visibility="Collapsed">
+            <StackPanel>
+                <TextBlock Text="RADAR" FontSize="10" FontWeight="Bold"
+                           Foreground="{DynamicResource HudMuted}" />
+                <Canvas x:Name="RadarCanvas" Width="150" Height="150"
+                        ClipToBounds="True" Margin="0,4,0,0">
+                    <!-- the radar plate: a dark disc the dots sit on -->
+                    <Ellipse Width="140" Height="140" Canvas.Left="5" Canvas.Top="5"
+                             Fill="#1A000000"
+                             Stroke="{DynamicResource HudBorder}" StrokeThickness="1" />
+                </Canvas>
+                <TextBlock x:Name="RadarHint" Text="" FontSize="10"
+                           Foreground="{DynamicResource HudMuted}" Margin="0,4,0,0" />
+            </StackPanel>
+        </Border>
+
+        <!-- g-meter: crosshair dot for lateral/longitudinal forces on the player car -->
+        <Border x:Name="WdgGmeter"
+                Background="{DynamicResource HudBg}"
+                BorderBrush="{DynamicResource HudBorder}"
+                BorderThickness="1"
+                CornerRadius="8" Padding="10,6"
+                Visibility="Collapsed">
+            <StackPanel>
+                <TextBlock Text="G-METER" FontSize="10" FontWeight="Bold"
+                           Foreground="{DynamicResource HudMuted}" />
+                <Canvas x:Name="GmeterCanvas" Width="110" Height="110"
+                        ClipToBounds="True" Margin="0,4,0,0" />
+            </StackPanel>
+        </Border>
+
+        <!-- rival panel: auto-cycle + Ctrl+Shift+R -->
+        <Border x:Name="WdgRival"
+                Background="{DynamicResource HudBg}"
+                BorderBrush="{DynamicResource HudGold}"
+                BorderThickness="1"
+                CornerRadius="8" Padding="10,6"
+                Visibility="Collapsed">
+            <StackPanel x:Name="RivalPanel">
+                <TextBlock x:Name="RivalHeaderText" FontSize="12" FontWeight="Bold"
+                           Foreground="{DynamicResource HudText}" />
+                <TextBlock x:Name="RivalTyreText" FontSize="11" Margin="0,2,0,0"
+                           Foreground="{DynamicResource HudMuted}" />
+                <TextBlock x:Name="RivalStatText" FontSize="11" Margin="0,2,0,0"
+                           Foreground="{DynamicResource HudMuted}" />
+            </StackPanel>
+        </Border>
+
+        <!-- battles: cars under 1s apart (commentary) -->
+        <Border x:Name="WdgBattles"
+                Background="{DynamicResource HudBg}"
+                BorderBrush="{DynamicResource HudGold}"
+                BorderThickness="1"
+                CornerRadius="8" Padding="10,6"
+                Visibility="Collapsed">
+            <TextBlock x:Name="BattlesText" FontSize="12" FontWeight="SemiBold"
+                       FontFamily="Cascadia Mono, Consolas"
+                       Foreground="{DynamicResource HudGold}" />
+        </Border>
+
+        <!-- race feed: penalties · retirements · fastest lap · speed trap -->
+        <Border x:Name="WdgFeed"
+                Background="{DynamicResource HudBg}"
+                BorderBrush="{DynamicResource HudBorder}"
+                BorderThickness="1"
+                CornerRadius="8" Padding="10,6"
+                Visibility="Collapsed">
+            <TextBlock x:Name="FeedText" FontSize="11"
+                       FontFamily="Cascadia Mono, Consolas"
+                       Foreground="{DynamicResource HudText}" />
+        </Border>
+
+        <!-- race info: pit window · clock · flags · invalid · damage · tyre bank · traffic · fuel -->
+        <Border x:Name="WdgRace"
+                Background="{DynamicResource HudBg}"
+                BorderBrush="{DynamicResource HudBorder}"
+                BorderThickness="1"
+                CornerRadius="8" Padding="12,8"
+                MinWidth="250">
+            <StackPanel>
+                <Grid x:Name="RaceTopRow">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock x:Name="PitWindowText" FontSize="12" FontWeight="SemiBold"
+                               FontFamily="Cascadia Mono, Consolas"
+                               Foreground="{DynamicResource HudMuted}" />
+                    <TextBlock x:Name="RaceClockText" Grid.Column="1" FontSize="12"
+                               FontFamily="Cascadia Mono, Consolas"
+                               Foreground="{DynamicResource HudText}" />
+                </Grid>
+                <TextBlock x:Name="FlagText" FontSize="12" FontWeight="Bold" Margin="0,5,0,0" />
+                <TextBlock x:Name="InvalidText" FontSize="11" FontWeight="Bold"
+                           Foreground="{DynamicResource HudText}"
+                           FontFamily="Cascadia Mono, Consolas" Margin="0,5,0,0" />
+                <TextBlock x:Name="DamageText" FontSize="11"
+                           FontFamily="Cascadia Mono, Consolas" Margin="0,5,0,0"
+                           Foreground="{DynamicResource HudMuted}" />
+                <TextBlock x:Name="TyreBankText" FontSize="11"
+                           FontFamily="Cascadia Mono, Consolas" Margin="0,5,0,0"
+                           Foreground="{DynamicResource HudMuted}" />
+                <TextBlock x:Name="TrafficText" FontSize="11" FontWeight="SemiBold" Margin="0,5,0,0" />
+                <TextBlock x:Name="FuelTrendText" FontSize="11"
+                           FontFamily="Cascadia Mono, Consolas" Margin="0,5,0,0"
+                           Foreground="{DynamicResource HudMuted}" />
+                <TextBlock x:Name="FuelAdviceText" FontSize="11" FontWeight="SemiBold"
+                           FontFamily="Cascadia Mono, Consolas" Margin="0,5,0,0" />
+            </StackPanel>
+        </Border>
+
+        <!-- timing tower: field-wide mini sector marks (green/purple) per driver -->
+        <Border x:Name="WdgTower"
+                Background="{DynamicResource HudBg}"
+                BorderBrush="{DynamicResource HudBorder}"
+                BorderThickness="1"
+                CornerRadius="8" Padding="10,6"
+                MinWidth="230"
+                Visibility="Collapsed">
+            <StackPanel>
+                <TextBlock Text="TIMING" FontSize="10" FontWeight="Bold"
+                           Foreground="{DynamicResource HudMuted}" />
+                <StackPanel x:Name="TowerPanel" Margin="0,4,0,0" />
+            </StackPanel>
+        </Border>
+    </Canvas>
+</Window>
