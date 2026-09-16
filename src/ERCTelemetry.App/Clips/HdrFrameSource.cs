@@ -22,12 +22,19 @@ public sealed partial class HdrFrameSource : IDisposable
 {
     private const int JpegQuality = 80;
 
+    /// <summary>Nach so vielen aufeinanderfolgenden Frame-Fehlern gilt das Capture-Device
+    /// als verloren und die Session wird neu gestartet (statt stumm weiterzufallen). Ein
+    /// einzelner Fehler (kurzzeitiger Locked Desktop) soll NICHT neu starten — erst eine
+    /// Serie zeigt ein echtes Problem (GPU-TDR / RDP-Disconnect).</summary>
+    private const int MaxConsecutiveCaptureFailures = 3;
+
     private readonly object _gate = new();
     private IDirect3DDevice? _device;
     private Direct3D11CaptureFramePool? _framePool;
     private GraphicsCaptureSession? _session;
     private GraphicsCaptureItem? _item;
     private bool _started;
+    private int _consecutiveFailures;
     private int _disposed;
 
     private volatile int _maxWidth = 1280;
@@ -39,6 +46,20 @@ public sealed partial class HdrFrameSource : IDisposable
     {
         get => _maxWidth;
         set => _maxWidth = value;
+    }
+
+    /// <summary>Aktuelle Item-Breite in Pixeln, oder null solange nicht gestartet. Der
+    /// ManageLoop vergleicht sie periodisch, um einen Auflösungswechsel mitten in der
+    /// Session zu erkennen (Pool-Neustart, siehe ScreenCaptureService).</summary>
+    public int? ItemWidth
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _item?.Size.Width;
+            }
+        }
     }
 
     /// <summary>Raised on a thread-pool thread for each captured frame.</summary>
@@ -126,11 +147,36 @@ public sealed partial class HdrFrameSource : IDisposable
                 var jpeg = EncodeJpeg(bitmap);
                 FrameCaptured?.Invoke(utc, jpeg);
             }
+
+            // Ein erfolgreicher Frame beendet die Fehlerserie.
+            Interlocked.Exchange(ref _consecutiveFailures, 0);
         }
         catch (Exception ex)
         {
-            // Locked desktop / RDP disconnect / device lost — skip the frame, keep going.
+            // Locked desktop / RDP disconnect / device lost — skip the frame.
             App.Log($"Screen capture failed: {ex.Message}");
+            // Device lost (GPU-TDR / RDP-Disconnect / Monitor-Wechsel): WGC wirft dann für
+            // jeden Frame. Nach einer Serie Stop(), damit der nächste ManageLoop-Tick
+            // (500 ms) Pool + Device idempotent neu erstellt — ohne das bliebe die
+            // Aufnahme für die ganze Session stumm und alle späteren Collision-Clips
+            // hätten kein Video (MEDIUM, 2026-09-16).
+            if (Interlocked.Increment(ref _consecutiveFailures) >= MaxConsecutiveCaptureFailures)
+            {
+                Interlocked.Exchange(ref _consecutiveFailures, 0);
+                // Stop() im async-void-Handler defensiv abfangen: wirft _session.Dispose()
+                // oder _framePool.Dispose() während der TDR-Teardown (genau der Zustand, für
+                // den der Restart gedacht ist), würde die Exception den WPF-Prozess kriegen
+                // (async void = kein awaitable) — der nächste ManageLoop-Tick startet das
+                // Capture dann trotzdem neu (LOW, 2026-09-16).
+                try
+                {
+                    Stop();
+                }
+                catch (Exception stopEx)
+                {
+                    App.Log($"Screen capture restart failed: {stopEx.Message}");
+                }
+            }
         }
     }
 

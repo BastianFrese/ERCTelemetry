@@ -15,10 +15,20 @@ Desktop app for EA F1 26 (also F1 25 with the "2026 Season Pack" UDP format) tha
 3. Stream overlays: OBS browser source (local web server) AND transparent WPF overlay window
 4. SQLite session history + JSON/CSV export + shareable session pages + collision clips
 
-## Current state (last verified: 2026-09-11)
+## Current state (last verified: 2026-09-16)
 
 **All phases 0–6 complete.** `dotnet build` clean (0 warnings), `dotnet test` green
-(723 Core + 31 ShareServer tests). **Auto-Token Session-Teilen (2026-09-11):** Enduser
+(785 Core + 63 ShareServer tests). **Clip-Pipeline E2E-verifiziert (2026-09-16):** der komplette
+Encode-Pfad ist headless gegen das gebündelte `ffmpeg.exe` getestet (`EncodePipelineTests`) —
+„gesunder Clip" enkodiert zur Echtzeit-Dauer (~20 s Fenster → ~20 s MP4, h264+aac, schlägt fehl
+wenn der 2x-Speed-Bug zurückkehrt) und „Audio kürzer als Video" übersteht den ‑shortest-
+Early-Exit über den neuen `FfmpegCommand.IsRegularEarlyExitAsync`-Guard (Output bleibt, statt
+gelöscht zu werden). Dazu robustness fixes im Capture-Pfad: Auto-Restart nach 3 Frame-Fehlern
+(Device-lost/RDP), Polling der Item-Breite für Auflösungswechsel (kein `SizeChanged`-Event in der
+.NET-Projection), Kill/Delete-Race beim ffmpeg-Cancel geschlossen, WAV-Fehler räumen das Temp.
+App-Start-Smoke-Test ok (einzig erwartbare Twitch-Token-Ablehnung im Log). **Offen:** Live-Test im
+echten Online-Rennen (Checkliste in `docs/CLIPS-PIPELINE.md`).
+**Auto-Token Session-Teilen (2026-09-11):** Enduser
 teilen Sessions ohne Token-Einrichtung — die App holt den aktuellen Server-Token über den
 neuen öffentlichen `GET /api/config` (Fallback: eingebauter `ShareConstants.DefaultToken`);
 ein selbst eingetragener Token gewinnt weiterhin (Rotation). **ERC-Integration (2026-09-11, 0.6.3):** Ergebnis nach
@@ -147,6 +157,14 @@ und **LLM-Layer 2 (Ollama)** umgesetzt (leichteste zuerst).
   (`FfmpegCommand.EffectiveFps`); `HdrFrameSource` nutzt 2 Pool-Buffers und gibt den Frame vor
   dem Encode frei; Throttle akzeptiert nur streng neuere Frames, das Clip-Fenster wird vor dem
   Encode chronologisch sortiert. Settings: FPS 1–60 + audio-device dropdown.
+- **Robustheit (2026-09-16, Review-Fixes + E2E):** `FfmpegCommand.IsRegularEarlyExitAsync`
+  erkennt den regulären ‑shortest-Early-Exit (Audio kürzer als Video) und behält die MP4 statt
+  sie zu löschen + bis 5 min Save-Gate-Blockade; `HdrFrameSource` stoppt nach 3 on-
+  einanderfolgenden Frame-Fehlern (Device-lost/RDP), der ManageLoop erstellt Pool+Device neu;
+  Auflösungswechsel wird per Item-Breite gepollt (`SizeChanged` ist NICHT in der .NET-Projection)
+  → Pool-Neustart + Store-Clear; Kill-Fehlerpfad killt den ffmpeg-Baum und wartet bounded
+  (2 s), bevor die Part-Datei gelöscht wird; `EncodePipelineTests` beweisen headless die
+  Echtzeit-Dauer ("gesunder Clip") und den Early-Exit-Guard gegen das echte ffmpeg.exe.
 - **Overlay pages (`wwwroot/overlay/`):** standings, player-card, race-control, broadcast, h2h,
   commentary, commentator (AI-Kommentator-Feed), tyres, timing-tower, relative, map +
   `overlay.js`/`overlay.css` (CSS-var + DOM-id contract in `overlay/README.md`); `map` rendert
@@ -187,7 +205,8 @@ und **LLM-Layer 2 (Ollama)** umgesetzt (leichteste zuerst).
   `ETXTBSY` ("text file busy") fehl. Config kommt per systemd-Env (`Share__Token`,
   `ASPNETCORE_URLS=http://0.0.0.0:5000`, `ASPNETCORE_ENVIRONMENT=Production`, `Share__RootPath`, Retention,
   Twitch/Discord-Secrets); der `appsettings.json`-Token im Build bleibt bewusst leerer Platzhalter.
-- **Tests:** `tests/ERCTelemetry.Core.Tests` (723), `tests/ERCTelemetry.ShareServer.Tests` (31).
+- **Tests:** `tests/ERCTelemetry.Core.Tests` (785, davon 8 `RollingFrameStore` + 2 neue
+  `EncodePipelineTests` gegen das echte ffmpeg.exe), `tests/ERCTelemetry.ShareServer.Tests` (63).
   (Chunk tests use per-session uids 42_001–42_004 — the shared fixture root + shared uid 42000
   polluted `Assert.False(File.Exists(...))` when the assembly test created the file first.)
 - **Port note:** the user runs the game on UDP 20778 (changed in-game deliberately); settings.json

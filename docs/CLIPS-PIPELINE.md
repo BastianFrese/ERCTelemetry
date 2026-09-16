@@ -2,7 +2,7 @@
 
 > **Status: als 0.6.1 veröffentlicht (2026-09-07) — aber NOCH NICHT live im echten Rennen
 > getestet.** Dieses Dokument ist der Arbeitsstand für die nächste Session.
-> Stand: 2026-09-07 (abends).
+> Stand: 2026-09-16.
 >
 > **Live-Test-Feedback gefixt (2026-09-11):** Clips liefen in doppelter/erhöhter Geschwindigkeit
 > bei normalem Ton. Ursache: der Frame-Pool hatte nur 1 Buffer und der JPEG-Encode blockierte
@@ -15,6 +15,11 @@
 > Store-Reihenfolge noch ffmpeg-Feed brechen: die Throttle akzeptiert nur noch streng neuere
 > Frames, `SaveClipAsync` sortiert das Fenster chronologisch; `EffectiveFps` rundet
 > AwayFromZero. Siehe „Zwei echte Bugs" unten für die Details.
+>
+> **E2E-Verifikation abgeschlossen (2026-09-16):** Der komplette Encode-Pfad ist jetzt headless
+> mit dem gebündelten `ffmpeg.exe` gegen echte JPEG-Frames + WAV getestet
+> (`EncodePipelineTests`) — inkl. simulierter Frame-Drops (echte Rate < eingestellte FPS) und
+> Audio-kürzer-als-Video (‑shortest-Early-Exit-Guard). Siehe „End-to-End verifiziert" unten.
 
 ## Was umgesetzt wurde
 
@@ -32,10 +37,20 @@ eine echte Video-Pipeline:
 
 ## Verifiziert
 
-- `dotnet build` sauber (0 Warnungen), **569 Tests grün** (8 neue `RollingFrameStore`-Tests).
-- **ffmpeg-Smoke-Test end-to-end:** 30 synthetische JPEG-Frames + 1s-WAV → MP4 mit exakt den
-  `BuildWithAudio`-Argumenten → **Video h264 30fps + Audio aac, 1.00s** ✓
-- `docs/HANDOFF.md` aktualisiert (Pipeline + neue Hard-won-Facts).
+- `dotnet build` sauber (0 Warnungen/0 Fehler), **848 Tests grün** (785 Core + 63 ShareServer).
+- **End-to-End-Encode-Tests gegen das echte `ffmpeg.exe`** (`tests/.../Clips/EncodePipelineTests.cs`,
+  läuft gegen die gebündelten `src/ERCTelemetry.App/ffmpeg/ffmpeg.exe`, sonst still übersprungen):
+  - **„Gesunder Clip":** 20-s-Window (12 s Pre-Roll + 8 s Post-Roll), Frames mit realen
+    Captured-Timestamps inkl. simulierter Drops (~30 statt 60 FPS) + 440-Hz-WAV → MP4 via den
+    echten `SaveClipAsync`-Schritten. Assertions: **Dauer ≈ 20 s** (hätte der 2x-Speed-Bug die
+    Frames mit 60 statt ~30 FPS enkodiert, wäre sie ~10 s — der Test schlägt dann fehl),
+    `Video: h264` + `Audio: aac`, Guard nicht gefeuert.
+  - **„Audio kürzer als Video":** Ring deckt nur die ersten 2 s des Fensters (Kollision kurz
+    nach Sessionstart) → ffmpeg beendet die Mux mit ‑shortest, der C#-Write-Loop trifft die
+    tote Pipe → der Guard erkennt den **regulären Early-Exit** und BEHÄLT die valide MP4
+    (~2 s) statt sie zu löschen.
+- **App-Start-Smoke-Test:** gestartetes `ERCTelemetry.exe` lief stabil, `error.log` wuchs nur um
+  die erwartbare Twitch-Token-Ablehnung (kein Capture-Fehler), sauber beendet.
 
 ## Zwei echte Bugs, die die Tests gefunden haben (gefixt)
 
@@ -48,10 +63,36 @@ plus der Speed-Bug aus dem Live-Test (2026-09-11, siehe oben)
 
 ## Was noch offen ist / ggf. nachgearbeitet werden muss
 
-### 1. Live-Test im echten Rennen (wichtigster Punkt)
-- App neu starten → Settings → Kollisions-Clips → FPS 60, Audio-Gerät wählen.
-- Kollision provozieren → Clip prüfen: flüssig? Ton? HDR nicht überbelichtet? Dauer = Pre+Post-Roll?
+### 1. Live-Test im echten Rennen (wichtigster Punkt, jetzt mit E2E-untermauertem Encode-Pfad)
+
+Voraussetzungen:
+- **Netzwerk-Session nötig:** Aufnahme läuft nur bei `IsNetworkGame`-Sessions (Online-Rennen). Ein
+  Solo-/Lokaltest fängt mangels Session-Status nichts auf — der Live-Test braucht ein echtes
+  Online-Rennen.
+- **`OnlyPlayerCollisions` beachten:** wenn aktiv, entstehen nur bei eigener/ausgewählter Kollision
+  Clips; für Testzwecke ggf. deaktivieren, damit jede Kollision einen Clip erzeugt.
+- **Exclusive Fullscreen:** in diesem Modus liefert WGC auf manchen GPUs kein Bild. Für den ersten
+  Live-Test **Borderless** wählen; wenn es im echten Fullscreen leer bleibt, ist es diese
+  bekannte Einschränkung, kein Pipeline-Bug.
+- Firewall-UAC-Prompt beim ersten Start: einmalig, erlaubn.
+
+Schritte:
+- App starten → Settings → Kollisions-Clips → FPS 60, Audio-Gerät wählen → speichern.
+- Erwartet vor dem Test: im `%LOCALAPPDATA%\ERCTelemetry\clips\_buffer` liegen Segment-Dateien
+  (Aufnahme läuft nur bei aktiver Netzwerk-Session).
+- Kollision provozieren → ~Pre+Post-Roll abwarten → Clip im Clips-Ordner prüfen.
+
+Prüfpunkte im Clip (in dieser Reihenfolge):
+1. **Dauer:** Pre-Roll + Post-Roll (±~5 %) — NICHT halb/doppelt so lang.
+2. **Geschwindigkeit:** normal (kein Zeitraffer).
+3. **Ton:** synchron zur Spur, lautstärke passt.
+4. **HDR:** Highlights nicht überstrahlt, Farben wie im Spiel.
+5. Datei spielt im Browser (faststart) und im Windows-Player (h264/aac).
 - Fehler landen im Debug-Tab / `error.log` (App-Log).
+
+Sollte der Clip doch fehlschlagen: `error.log` prüfen — „Clip encode failed" mit EPIPE/IOException
+ist der (jetzt gefixte) ‑shortest-Early-Exit-Pfad; „Screen capture failed" eine Capture-Serie
+(jetzt mit Auto-Restart nach 3 Frame-Fehlern).
 
 ### 2. Bekannte Schwachstellen / mögliche Nacharbeit
 - ~~**Frame-Pool mit 1 Buffer**~~ — **gefixt (2026-09-11):** der Pool hat jetzt 2 Buffers, und
@@ -59,6 +100,23 @@ plus der Speed-Bug aus dem Live-Test (2026-09-11, siehe oben)
   direkt nach `CreateCopyFromSurfaceAsync` freigegeben und erst danach enkodiert (parallel;
   `EncoderParameters` darum pro Aufruf). Das 1-Buffer-Encode-Blocking war zugleich die Ursache
   für „Clip läuft doppelt so schnell" (echte Framerate < eingestellte FPS, siehe oben).
+- ~~**Device-Lost / RDP-Disconnect** — **gefixt (2026-09-16):** WGC wirft nach einem Fehler
+  (GPU-TDR, RDP-Disconnect, Monitor-Wechsel) für *jeden* Frame; die Aufnahme blieb sonst für
+  die ganze Session stumm. Jetzt stoppt `HdrFrameSource` nach 3 aufeinanderfolgenden Frame-Fehlern
+  und der nächste ManageLoop-Tick (500 ms) erstellt Pool + Device idempotent neu.~~
+- ~~**Auflösungswechsel mitten in der Session** — **gefixt (2026-09-16):** der Frame-Pool hätte
+  skaliert/gepaddete Frames weiter geliefert und ein Clip über die Grenze zwei Größen gemischt
+  (ffmpeg-Mux-Fehler). `ScreenCaptureService` pollt die Item-Breite (500 ms) und startet bei
+  Änderung die Capture neu + leert den Store. (Kein `SizeChanged`-Event in der .NET-Projection;
+  darum Polling.)~~
+- ~~**ffmpeg-Early-Exit durch ‑shortest** — **gefixt (2026-09-16):** endet die Audio-Spur vor dem
+  Video (Ring-Lücke beim Sessionstart), schließt ffmpeg stdin früh → der Write-Loop traf eine
+  tote Pipe, der äußere catch löschte den eigentlich gültigen Output und blockierte bis zum
+  5-min-EncodeTimeout. `FfmpegCommand.IsRegularEarlyExitAsync` erkennt den regulären Abschluss
+  (Exit 0 + nicht-leere Datei + 3-s-Grace) und behält den Clip (E2E-getestet).~~
+- ~~**Kill/Delete-Race:** ffmpeg hielt nach timeout/cancel die Output-Datei offen → `TryDelete`
+  scheiterte und ließ eine verwaiste Partial-MP4 zurück. `KillProcessTreeAndWaitForExit` killt
+  jetzt die Prozess-Bäume und wartet (bounded 2 s), bevor gelöscht wird.~~
 - **Audio-Ring-Neustart bei Settings-Änderung mitten in der Session**: wenn das Fenster
   (Pre+Post-Roll) größer wird als der Ring, wird `AudioLoopbackSource` neu gestartet → Puffer
   verliert Audio. Nur bei Fenster-Vergrößerung, selten — aber bewusst.
@@ -81,7 +139,11 @@ plus der Speed-Bug aus dem Live-Test (2026-09-11, siehe oben)
 - Neu: `src/ERCTelemetry.App/Clips/HdrFrameSource.cs`, `AudioLoopbackSource.cs`,
   `src/ERCTelemetry.Core/Clips/RollingFrameStore.cs`, `AudioRingBuffer.cs` (Properties ergänzt),
   `tests/ERCTelemetry.Core.Tests/Clips/RollingFrameStoreTests.cs`
+- Neu (2026-09-16): `tests/ERCTelemetry.Core.Tests/Clips/EncodePipelineTests.cs` — E2E-Encode
+  gegen das echte `ffmpeg.exe` (normale Geschwindigkeit + ‑shortest-Early-Exit).
 - Rewrite: `src/ERCTelemetry.App/Clips/ScreenCaptureService.cs`
-- Geändert: `ERCTelemetry.App.csproj` (TargetPlatformIdentifier/Version für Windows-SDK-Projections),
+- Geändert (2026-09-16): `src/ERCTelemetry.Core/Clips/FfmpegCommand.cs` (Early-Exit-Guard),
+  `HdrFrameSource.cs` (Auto-Restart nach Frame-Fehler-Serie),
+  `ERCTelemetry.App.csproj` (TargetPlatformIdentifier/Version für Windows-SDK-Projections),
   `SettingsViewModel.cs`, `MainWindow.xaml`, `docs/HANDOFF.md`
 - Gelöscht: `FrameRingBuffer.cs` + `FrameRingBufferTests.cs` (toter Code, durch RollingFrameStore ersetzt)

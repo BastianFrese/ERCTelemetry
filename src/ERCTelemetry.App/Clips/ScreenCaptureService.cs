@@ -25,6 +25,7 @@ public sealed class ScreenCaptureService : IDisposable
     /// stall) must release the capture save gate instead of blocking every later clip.</summary>
     private static readonly TimeSpan EncodeTimeout = TimeSpan.FromMinutes(5);
     private DateTimeOffset _lastFrameUtc;
+    private int? _lastCaptureItemWidth;
     private volatile bool _sessionActive;
     private int _disposed;
 
@@ -106,6 +107,10 @@ public sealed class ScreenCaptureService : IDisposable
         var audio = WriteAudioWindow(ring, fromUtc, toUtc);
         Process? process = null;
         var started = false;
+        // Im Erfolgspfad wird die stderr-Task normal awaited; wirft es davor, muss sie im
+        // catch beobachtet werden, sonst fault sie unobserved, wenn process.Dispose() die
+        // umgeleiteten Streams schließt (LOW, 2026-09-16).
+        Task<string>? stderrTask = null;
         try
         {
             var args = audio.FilePath is null
@@ -140,15 +145,50 @@ public sealed class ScreenCaptureService : IDisposable
             process.Start();
             started = true;
             // Drain stderr concurrently so ffmpeg's progress lines never fill the pipe.
-            var stderrTask = process.StandardError.ReadToEndAsync();
+            stderrTask = process.StandardError.ReadToEndAsync();
+            // Endet die Audio-Spur vor dem Video (Ring-Lücke beim Sessionstart,
+            // Geräte-Neustart → WriteAudioWindow liefert weniger Samples), beendet
+            // ffmpeg mit -shortest die Mux beim Audio-Ende und schließt stdin früh. Das
+            // Schreiben der Rest-Frames trifft dann eine tote Pipe (IOException), und der
+            // äußere catch löschte bisher den eigentlich gültigen Output und blockierte
+            // bis zum 5-min-EncodeTimeout (HIGH, 2026-09-16). Ein solcher Early-Exit wird
+            // nur anerkannt, wenn ffmpeg mit 0 endete und eine nicht-leere Datei hinterlässt
+            // — jede andere IOException bleibt ein echter Encode-Fehler.
             foreach (var (_, jpeg) in windowed)
             {
-                await process.StandardInput.BaseStream.WriteAsync(jpeg, encodeCt);
+                try
+                {
+                    await process.StandardInput.BaseStream.WriteAsync(jpeg, encodeCt);
+                }
+                catch (IOException)
+                {
+                    // Der Guard entscheidet, ob der Early-Exit regulär war (siehe oben).
+                    if (await FfmpegCommand.IsRegularEarlyExitAsync(process, outputPath))
+                    {
+                        break;
+                    }
+                    throw;
+                }
             }
 
-            process.StandardInput.Close();
+            try
+            {
+                process.StandardInput.Close();
+            }
+            catch (IOException)
+            {
+                // Auch das Close kann regulär früh enden: bei einem Low-Motion-Clip passten
+                // die letzten Frames noch in den Pipe-Puffer, bevor ffmpeg stdin schloss —
+                // dann schlug bisher das unbewachte Close fehl und der äußere catch löschte
+                // den gültigen Output. Denselben Guard anwenden (LOW, 2026-09-16).
+                if (!await FfmpegCommand.IsRegularEarlyExitAsync(process, outputPath))
+                {
+                    throw;
+                }
+            }
+
             await process.WaitForExitAsync(encodeCt);
-            var stderr = await stderrTask;
+            var stderr = await stderrTask!;
             if (process.ExitCode != 0)
             {
                 App.Log($"ffmpeg failed (exit {process.ExitCode}): {stderr}");
@@ -164,12 +204,30 @@ public sealed class ScreenCaptureService : IDisposable
         }
         catch (Exception ex)
         {
-            App.Log($"Clip encode failed: {ex.Message}");
             // On cancel/timeout ffmpeg is still running and holds the output file open —
             // TryDelete would fail and leave an orphan partial MP4. Kill the tree first,
             // so the file is actually deletable; the finally repeats the kill (no-op).
-            KillProcessTree(process, started);
+            KillProcessTreeAndWaitForExit(process, started);
             TryDelete(outputPath);
+            // stderr-Task NACH dem Kill beobachten: hängt der Encoder, schließt erst der
+            // Kill die stderr-Pipe, sodass ReadToEndAsync hier zu Ende kommt (statt ewig zu
+            // blockieren) — und der ffmpeg-stderr landet für die Diagnose im Log statt
+            // unobserved zu faulten, wenn process.Dispose() die Streams schließt
+            // (LOW, 2026-09-16).
+            var stderr = string.Empty;
+            if (stderrTask is not null)
+            {
+                try
+                {
+                    stderr = await stderrTask;
+                }
+                catch (Exception readEx)
+                {
+                    App.Log($"Clip encode stderr read failed: {readEx.Message}");
+                }
+            }
+
+            App.Log($"Clip encode failed: {ex.Message}{(stderr.Length == 0 ? string.Empty : $" — stderr: {stderr}")}");
             return null;
         }
         finally
@@ -179,7 +237,7 @@ public sealed class ScreenCaptureService : IDisposable
                 // ffmpeg must never survive a cancel/timeout: it would keep the output
                 // file open (TryDelete fails) and leave a clip with no DB entry, and a
                 // hung process would hold the capture save gate forever. Kill the tree.
-                KillProcessTree(process, started);
+                KillProcessTreeAndWaitForExit(process, started);
                 process.Dispose();
             }
 
@@ -190,9 +248,12 @@ public sealed class ScreenCaptureService : IDisposable
         }
     }
 
-    /// <summary>Terminates ffmpeg if it is still running. Idempotent — called from both
-    /// the catch (before the output file is deleted) and the finally.</summary>
-    private static void KillProcessTree(Process? process, bool started)
+    /// <summary>Terminates ffmpeg if it is still running and waits (bounded) for it to
+    /// exit. Kill alone returns before the child has released its file handles, so a
+    /// TryDelete right after would hit a sharing violation and leave an orphan partial
+    /// MP4 behind (MEDIUM, 2026-09-16). Idempotent — called from both the catch (before
+    /// the output file is deleted) and the finally.</summary>
+    private static void KillProcessTreeAndWaitForExit(Process? process, bool started)
     {
         if (process is null || !started || process.HasExited)
         {
@@ -206,6 +267,17 @@ public sealed class ScreenCaptureService : IDisposable
         catch
         {
             // Already gone — nothing left to kill.
+        }
+
+        try
+        {
+            // Bounded: ein weiterhin hängendes Kind darf die Save-Gate nicht länger als
+            // 2 s blockieren. WaitForExit lässt den Kernel die Output-Handles schließen.
+            process.WaitForExit(2000);
+        }
+        catch
+        {
+            // Kill-Exited-Race: WaitForExit auf einen soeben beendeten Prozess wirft.
         }
     }
 
@@ -229,9 +301,19 @@ public sealed class ScreenCaptureService : IDisposable
 
         var path = Path.Combine(Path.GetTempPath(), $"erc-clip-{Guid.NewGuid():N}.wav");
         var format = WaveFormat.CreateIeeeFloatWaveFormat(ring.SampleRate, ring.Channels);
-        using (var writer = new WaveFileWriter(path, format))
+        try
         {
-            writer.WriteSamples(samples, 0, samples.Length);
+            using (var writer = new WaveFileWriter(path, format))
+            {
+                writer.WriteSamples(samples, 0, samples.Length);
+            }
+        }
+        catch
+        {
+            // Schlägt der WAV-Write fehl (Disk voll / Temp-Pfad problematisch), bleibt die
+            // teilweise geschriebene Datei sonst ewig im %TEMP% liegen (LOW, 2026-09-16).
+            TryDelete(path);
+            throw;
         }
 
         var duration = samples.Length / (double)(ring.SampleRate * ring.Channels);
@@ -273,56 +355,98 @@ public sealed class ScreenCaptureService : IDisposable
 
         while (!ct.IsCancellationRequested)
         {
-            var settings = _settings();
-            var shouldCapture = _sessionActive && settings.Enabled;
-            var window = TimeSpan.FromSeconds(Math.Max(30, settings.PreRollSeconds + settings.PostRollSeconds));
-
-            lock (_gate)
+            // Der komplette Tick-Body ist gegen jeden Fehler abgesichert: ein Wurf hier
+            // (z. B. WinRT-COM-Read in _frames.ItemWidth während eines Device-Lost-Rennen,
+            // oder ein transienter Disk-/ACL-Fehler im RollingFrameStore-Ctor) würde den
+            // Task.Run-Loop unbeobachtet sterben lassen — die Aufnahme bliebe für den Rest
+            // des Prozesslaufs stumm, ohne Log-Eintrag (MEDIUM, 2026-09-16). Loggen und im
+            // nächsten Tick weiter versuchen.
+            try
             {
-                if (shouldCapture)
+                var settings = _settings();
+                var shouldCapture = _sessionActive && settings.Enabled;
+                var window = TimeSpan.FromSeconds(Math.Max(30, settings.PreRollSeconds + settings.PostRollSeconds));
+
+                lock (_gate)
                 {
-                    if (_store is null)
+                    if (shouldCapture)
                     {
-                        _store = new RollingFrameStore(BufferDirectory(), window);
-                    }
-                    else if (_store.Window != window)
-                    {
-                        // Settings changed the window — recreate the buffer.
-                        _store.Dispose();
-                        _store = new RollingFrameStore(BufferDirectory(), window);
-                    }
+                        if (_store is null)
+                        {
+                            _store = new RollingFrameStore(BufferDirectory(), window);
+                        }
+                        else if (_store.Window != window)
+                        {
+                            // Settings changed the window — recreate the buffer.
+                            _store.Dispose();
+                            _store = new RollingFrameStore(BufferDirectory(), window);
+                        }
 
-                    // Resolution changed — restart capture so the frame pool is recreated
-                    // at the new size (the pool is sized from MaxWidth at Start).
-                    var maxWidth = Math.Clamp(settings.MaxWidth, 640, 7680);
-                    if (_frames.MaxWidth != maxWidth)
-                    {
-                        _frames.Stop();
-                        _frames.MaxWidth = maxWidth;
-                        // Frames before the change are at the old width — a clip window
-                        // spanning the change would mix sizes and fail the ffmpeg encode.
-                        _store.Clear();
-                    }
+                        // Resolution changed — restart capture so the frame pool is recreated
+                        // at the new size (the pool is sized from MaxWidth at Start).
+                        var maxWidth = Math.Clamp(settings.MaxWidth, 640, 7680);
+                        if (_frames.MaxWidth != maxWidth)
+                        {
+                            _frames.Stop();
+                            _frames.MaxWidth = maxWidth;
+                            // Frames before the change are at the old width — a clip window
+                            // spanning the change would mix sizes and fail the ffmpeg encode.
+                            _store.Clear();
+                            // Ein bereits in-flight Frame aus dem alten Pool (Surface-Copy lief
+                            // schon vor dem Stop) hat einen Timestamp VOR dem Clear und würde die
+                            // Throttle passieren und den leeren Store mit der alten Breite füllen.
+                            // _lastFrameUtc auf jetzt setzen verwirft ihn (utc < _lastFrameUtc).
+                            _lastFrameUtc = DateTimeOffset.UtcNow;
+                        }
 
-                    // Idempotent — also retries after a failed start (locked desktop etc.).
-                    _frames.Start();
-                    _audio.Start();
+                        // Primary display resolution changed mid-session (e.g. the game switches
+                        // borderless → fullscreen): the frame pool is sized to the old width
+                        // and would keep delivering scaled/padded frames. Stop so the next tick
+                        // recreates the pool at the new size. GraphicsCaptureItem exposes no
+                        // SizeChanged in the .NET projection, so poll the item width instead.
+                        // The first observation (after Start) only records the width — an
+                        // unconditional Stop there would restart capture once for no reason.
+                        var itemWidth = _frames.ItemWidth;
+                        if (itemWidth is not null && itemWidth != _lastCaptureItemWidth)
+                        {
+                            if (_lastCaptureItemWidth is not null)
+                            {
+                                App.Log($"Screen capture item resized to {itemWidth}px wide — restarting capture.");
+                                _frames.Stop();
+                                // Frames before the change are at the old width — a clip window
+                                // spanning the change would mix sizes and fail the ffmpeg encode.
+                                _store.Clear();
+                                // In-flight Frames aus dem alten Pool verwerfen (siehe oben).
+                                _lastFrameUtc = DateTimeOffset.UtcNow;
+                            }
 
-                    // Window outgrew the audio ring — restart capture with a bigger buffer.
-                    var ring = _audio.Ring;
-                    if (ring is not null && ring.CapacitySeconds < window.TotalSeconds)
-                    {
-                        _audio.Stop();
+                            _lastCaptureItemWidth = itemWidth;
+                        }
+
+                        // Idempotent — also retries after a failed start (locked desktop etc.).
+                        _frames.Start();
                         _audio.Start();
+
+                        // Window outgrew the audio ring — restart capture with a bigger buffer.
+                        var ring = _audio.Ring;
+                        if (ring is not null && ring.CapacitySeconds < window.TotalSeconds)
+                        {
+                            _audio.Stop();
+                            _audio.Start();
+                        }
+                    }
+                    else if (_store is not null)
+                    {
+                        _store.Dispose();
+                        _store = null;
+                        _frames.Stop();
+                        _audio.Stop();
                     }
                 }
-                else if (_store is not null)
-                {
-                    _store.Dispose();
-                    _store = null;
-                    _frames.Stop();
-                    _audio.Stop();
-                }
+            }
+            catch (Exception ex)
+            {
+                App.Log($"Clip manage loop tick failed: {ex.Message}");
             }
 
             try
