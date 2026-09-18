@@ -77,7 +77,7 @@ function verbindeGoxlr(onPatch) {
     });
     goxlrSock.addEventListener('error', e => {
       log('[goxlr] Fehler:', (e.message || (e.error && e.error.message) || ''));
-      try { goxlrSock.close(); } catch { /* schon geschlossen */ }
+      neu(); // direkt neu planen — close() hier löst Folge-Fehler aus (Kette)
     });
     goxlrSock.addEventListener('close', neu);
   }
