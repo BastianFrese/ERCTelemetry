@@ -24,6 +24,9 @@ const http = require('http');
 // ── Konfiguration ─────────────────────────────────────────────
 const args = process.argv.slice(2);
 function argWert(name) {
+  // --name=WERT und --name WERT (Leerzeichen) akzeptieren
+  const i = args.indexOf('--' + name);
+  if (i >= 0 && args[i + 1]) return args[i + 1];
   const a = args.find(x => x.startsWith('--' + name + '='));
   return a ? a.split('=').slice(1).join('=') : null;
 }
