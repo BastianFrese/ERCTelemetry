@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>ERCTelemetry — Meisterschaft</title>
+<link rel="stylesheet" href="overlay.css">
+<style>
+  /* ERC-Meisterschaft: Fahrer-WM + Team-WM aus den ErdiHub-Daten, rotiert
+     durch die 3 Ligen (DIV MAIN / DIV SECOND / DIV 3 ROOKIE). Entwurfsgröße
+     1600×1050, skaliert per buehnenFit. Kein WS nötig (nur Spieler-Markierung). */
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: transparent; overflow: hidden; }
+  body { font-family: 'Segoe UI', 'Bahnschrift', sans-serif; color: #f2f2f2; }
+  .buehne { width: 1600px; height: 1050px; padding: 26px 34px; box-sizing: border-box; }
+  .kopf { display: flex; align-items: baseline; gap: 18px; margin-bottom: 14px; }
+  .logo {
+    background: #e10600; color: #fff; font-weight: 900; font-style: italic;
+    padding: 4px 14px; letter-spacing: .08em; font-size: 20px;
+    clip-path: polygon(0 0, 100% 0, 92% 100%, 0 100%);
+  }
+  .titel { font-size: 34px; font-weight: 900; font-style: italic; letter-spacing: .03em; }
+  .liga-chip {
+    font-size: 17px; font-weight: 900; font-style: italic; letter-spacing: .1em;
+    padding: 4px 14px; color: #15151b; border-radius: 3px; white-space: nowrap;
+  }
+  .punkte {
+    display: flex; gap: 6px; margin-left: 14px; align-items: center;
+  }
+  .punkte span {
+    width: 9px; height: 9px; border-radius: 50%; background: rgba(255,255,255,.18);
+    transition: background .3s, transform .3s;
+  }
+  .punkte span.an { background: var(--overlay-gold, #ffd500); transform: scale(1.25); }
+  .ort { color: #9a9aa5; font-size: 16px; margin-left: auto; }
+  .spalten { display: grid; grid-template-columns: 1fr 420px; gap: 30px; }
+  /* Wechsel-Animation: die Spalten gleiten kurz hoch und faden ein */
+  .spalten.wechsel { animation: rein .45s cubic-bezier(.2,.9,.25,1); }
+  @keyframes rein { from { opacity: 0; transform: translateY(14px); } }
+  .kasten-titel {
+    font-size: 15px; font-weight: 800; text-transform: uppercase; letter-spacing: .1em;
+    color: #9a9aa5; margin: 0 0 8px; padding-left: 10px; border-left: 4px solid #e10600;
+  }
+  .zeile {
+    display: flex; align-items: center; gap: 10px; height: 44px; margin-bottom: 5px;
+    background: linear-gradient(90deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
+    border: 1px solid rgba(255,255,255,.08); overflow: hidden;
+  }
+  .zeile .pos {
+    width: 48px; height: 100%; display: flex; align-items: center; justify-content: center;
+    font-weight: 900; font-size: 18px; font-style: italic; background: rgba(255,255,255,.08);
+    font-variant-numeric: tabular-nums; flex: none;
+  }
+  .zeile.p1 .pos { background: #e10600; }
+  .zeile.p2 .pos { background: #b8b8c0; color: #111; }
+  .zeile.p3 .pos { background: #b6713d; }
+  .zeile .balken { width: 5px; height: 68%; border-radius: 2px; flex: none; }
+  .zeile .name {
+    font-size: 18px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .zeile .team { color: #9a9aa5; font-size: 12.5px; font-weight: 600; text-transform: uppercase; margin-left: auto; letter-spacing: .04em; }
+  .zeile .pkt {
+    font-family: 'Cascadia Mono', Consolas, monospace; font-weight: 700; font-size: 17px;
+    width: 74px; text-align: center; align-self: stretch; display: flex; align-items: center;
+    justify-content: center; background: rgba(255,255,255,.07); flex: none;
+  }
+  .zeile.spieler { border-color: rgba(225,6,0,.7); background: rgba(225,6,0,.10); }
+  .logo-klein { color: #6d6d78; font-size: 12px; margin-top: 12px; letter-spacing: .06em; text-transform: uppercase; }
+</style>
+</head>
+<body>
+  <div class="buehne" id="buehne">
+    <div class="kopf">
+      <span class="logo">ERC</span>
+      <span class="titel">MEISTERSCHAFT</span>
+      <span class="liga-chip" id="liga-chip"></span>
+      <span class="punkte" id="punkte"></span>
+      <span class="ort" id="stand-datum"></span>
+    </div>
+    <div class="spalten" id="spalten">
+      <div>
+        <div class="kasten-titel">Fahrerwertung</div>
+        <div id="fahrer-liste"></div>
+      </div>
+      <div>
+        <div class="kasten-titel">Teamwertung</div>
+        <div id="team-liste"></div>
+      </div>
+    </div>
+    <div class="logo-klein">Erdi's Racing Community · Daten von erdi-erc.de</div>
+  </div>
+  <script src="overlay.js"></script>
+  <script src="erc-names.js"></script>
+  <script>
+    (function () {
+      'use strict';
+      var params = new URLSearchParams(location.search);
+      var LIMIT = Math.max(3, parseInt(params.get('limit'), 10) || 15);
+      // Sekunden pro Liga bis zum Wechsel; 0 = stehen bleiben
+      var WECHSEL_SEK = parseInt(params.get('wechsel'), 10);
+      if (isNaN(WECHSEL_SEK)) WECHSEL_SEK = 12;
+      // ?liga=pro|second|rookie pinnt eine Liga (kein Wechsel)
+      var gepinnt = params.get('liga');
+      var fahrerListe = document.getElementById('fahrer-liste');
+      var teamListe = document.getElementById('team-liste');
+      var spalten = document.getElementById('spalten');
+      var buehne = document.getElementById('buehne');
+      // Eigener Fit in BEIDEN Richtungen (overlayFit skaliert nur hoch)
+      window.buehnenFit = window.buehnenFit || function (el, w, h) {
+        function anwenden() {
+          var u = Math.min(window.innerWidth / w, window.innerHeight / h);
+          el.style.transformOrigin = 'top left';
+          el.style.transform = 'scale(' + u + ')';
+        }
+        window.addEventListener('resize', anwenden);
+        anwenden();
+      };
+      window.buehnenFit(buehne, 1600, 1050);
+
+      var TEAMFARBEN = {
+        'mclaren': '#ff8000', 'red bull racing': '#3671c6', 'ferrari': '#e8002d',
+        'mercedes': '#27f4d2', 'aston martin': '#229971', 'alpine': '#ff87bc',
+        'williams': '#64c4ff', 'racing bulls': '#6692ff', 'haas': '#b6babd',
+        'sauber': '#52e252', 'audi': '#00e701', 'cadillac': '#00a3e0',
+      };
+      function teamFarbe(team) { return TEAMFARBEN[String(team || '').toLowerCase()] || '#8a8a95'; }
+
+      // Escaping: Namen/Teams kommen von erdi-erc.de — niemals roh ins innerHTML
+      function esc(s) {
+        return window.overlayFormat && window.overlayFormat.esc
+          ? window.overlayFormat.esc(String(s == null ? '' : s))
+          : String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+              return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+            });
+      }
+
+      /* Die 3 Ligen der ERC — Keys wie die leagueId auf erdi-erc.de. Ohne
+         Liga-Feld in den Daten (alter JSON-Stand) läuft eine einzige
+         Gesamt-Ansicht ohne Wechsel. */
+      var LIGEN = [
+        { key: 'pro', name: 'DIV MAIN', farbe: '#ffd500' },
+        { key: 'second', name: 'DIV SECOND', farbe: '#b8b8c0' },
+        { key: 'rookie', name: 'DIV 3 ROOKIE', farbe: '#b6713d' },
+      ];
+      var daten = null;
+      var ligaIndex = 0;
+
+      // Wer ist im Spiel der "Spieler"? Seine Zeile bekommt den roten Rahmen.
+      var spielerName = null;
+      window.connectOverlay({
+        onState: function (msg) {
+          var p = (msg.standings || []).find(function (r) { return r.isPlayer; });
+          spielerName = p ? p.name : null;
+          markieren();
+        },
+      });
+      function markieren() {
+        if (!spielerName) return;
+        var n = spielerName.toLowerCase();
+        fahrerListe.querySelectorAll('.zeile').forEach(function (el) {
+          el.classList.toggle('spieler', el._wer && el._wer.toLowerCase() === n);
+        });
+      }
+
+      function fahrerDerLiga(liga) {
+        var alle = (daten.fahrer || []).filter(function (f) {
+          return f.saison && (f.saison.rennen > 0 || f.saison.punkte > 0);
+        });
+        if (!liga) return alle; // Gesamt-Ansicht (Daten ohne liga-Feld)
+        return alle.filter(function (f) { return f.liga === liga; });
+      }
+
+      function zeichneLiga() {
+        var liga = LIGEN[ligaIndex] || null;
+        // Keine Liga-Daten? Alles in einer Ansicht zeigen (alter JSON-Stand)
+        if (!fahrerDerLiga('pro').length && !fahrerDerLiga('second').length && !fahrerDerLiga('rookie').length) {
+          liga = null;
+        }
+        var reihen = fahrerDerLiga(liga ? liga.key : null);
+        // Autoritative Tabellen-Position von der API? Dann sortieren wir exakt wie
+        // erdi-erc.de. Alte Daten (ohne position) sortieren wie bisher selbst.
+        var mitPosition = reihen.some(function (f) { return f.position > 0; });
+        reihen.sort(function (a, b) {
+          if (mitPosition) return (a.position > 0 ? a.position : 999) - (b.position > 0 ? b.position : 999);
+          return (b.saison.punkte - a.saison.punkte) || (b.saison.podien - a.saison.podien);
+        });
+
+        // Kopf: Liga-Chip + Fortschrittspunkte
+        var chip = document.getElementById('liga-chip');
+        if (liga) {
+          chip.textContent = liga.name;
+          chip.style.background = liga.farbe;
+          chip.style.display = '';
+          var punkte = document.getElementById('punkte');
+          punkte.style.display = '';
+          punkte.innerHTML = LIGEN.map(function (l, i) {
+            return '<span class="' + (i === ligaIndex ? 'an' : '') + '"></span>';
+          }).join('');
+        } else {
+          chip.style.display = 'none';
+          document.getElementById('punkte').style.display = 'none';
+        }
+
+        // Fahrerwertung
+        fahrerListe.innerHTML = '';
+        reihen.slice(0, LIMIT).forEach(function (f, i) {
+          var el = document.createElement('div');
+          el.className = 'zeile' + (i === 0 ? ' p1' : i === 1 ? ' p2' : i === 2 ? ' p3' : '');
+          el._wer = f.ingame || f.name;
+          el.innerHTML =
+            '<div class="pos">' + (i + 1) + '</div>' +
+            '<div class="balken" style="background:' + teamFarbe(f.team) + '"></div>' +
+            '<div class="name">' + esc(f.ingame || f.name) + '</div>' +
+            // Wie erdi-erc.de: Reservefahrer ohne Team als „Ersatzfahrer" zeigen
+            '<div class="team">' + esc(f.team || (f.istReserve ? 'Ersatzfahrer' : '')) + '</div>' +
+            '<div class="pkt">' + f.saison.punkte + '</div>';
+          fahrerListe.appendChild(el);
+        });
+        markieren();
+
+        // Teamwertung: echte Konstrukteurswertung von der API (Reserve/Gast-Logik
+        // inklusive), wenn für diese Liga vorhanden — sonst Summe über die Fahrer.
+        var teamReihen = (daten.teams || [])
+          .filter(function (t) { return liga ? t.liga === liga.key : false; })
+          .map(function (t) { return { team: t.team, punkte: t.punkte }; });
+        if (!teamReihen.length) {
+          var teams = {};
+          reihen.forEach(function (f) {
+            var t = f.team || 'Ohne Team';
+            teams[t] = (teams[t] || 0) + f.saison.punkte;
+          });
+          teamReihen = Object.keys(teams).map(function (t) {
+            return { team: t, punkte: teams[t] };
+          }).sort(function (a, b) { return b.punkte - a.punkte; });
+        }
+        teamListe.innerHTML = '';
+        teamReihen.slice(0, 10).forEach(function (t, i) {
+          var el = document.createElement('div');
+          el.className = 'zeile' + (i === 0 ? ' p1' : i === 1 ? ' p2' : i === 2 ? ' p3' : '');
+          el.innerHTML =
+            '<div class="pos">' + (i + 1) + '</div>' +
+            '<div class="balken" style="background:' + teamFarbe(t.team) + '"></div>' +
+            '<div class="name">' + esc(t.team) + '</div>' +
+            '<div class="pkt">' + t.punkte + '</div>';
+          teamListe.appendChild(el);
+        });
+      }
+
+      function zeichne(geladen) {
+        daten = geladen;
+        document.getElementById('stand-datum').textContent =
+          'Stand: ' + new Date(daten.geholt).toLocaleDateString('de-DE');
+        zeichneLiga();
+
+        // Wechsel-Loop: nur wenn es wirklich mehrere Ligen mit Fahrern gibt
+        var gefuellt = LIGEN.filter(function (l) { return fahrerDerLiga(l.key).length > 0; });
+        if (gefuellt.length > 1 && WECHSEL_SEK > 0 && !gepinnt) {
+          setInterval(function () {
+            ligaIndex = (ligaIndex + 1) % LIGEN.length;
+            // Ligen ohne Fahrer überspringen
+            if (!fahrerDerLiga(LIGEN[ligaIndex].key).length) {
+              for (var i = 0; i < LIGEN.length; i++) {
+                ligaIndex = (ligaIndex + 1) % LIGEN.length;
+                if (fahrerDerLiga(LIGEN[ligaIndex].key).length) break;
+              }
+            }
+            // Wechsel-Animation neu starten (Klasse weg → reflow → wieder dran)
+            spalten.classList.remove('wechsel');
+            void spalten.offsetWidth;
+            spalten.classList.add('wechsel');
+            zeichneLiga();
+          }, WECHSEL_SEK * 1000);
+        }
+      }
+
+      // ?liga= pinnt eine Liga: Index vorspulen, kein Loop
+      if (gepinnt) {
+        var pinIndex = LIGEN.findIndex(function (l) { return l.key === gepinnt; });
+        if (pinIndex >= 0) ligaIndex = pinIndex;
+      }
+      window.ercNames.lade(zeichne);
+    })();
+  </script>
+  <noscript>JavaScript required for the live overlay.</noscript>
+</body>
+</html>

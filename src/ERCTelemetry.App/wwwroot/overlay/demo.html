@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>ERCTelemetry — Demo</title>
+<style>
+  /* Demo-Menue: alle Overlay-Seiten mit Dummy-Daten ansehen.
+       Start:  node tools/demo-server.js 8091   ->  http://127.0.0.1:8091/overlay/demo.html */
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; background: #0b0b10; color: #f2f2f2;
+    font-family: 'Segoe UI', 'Bahnschrift', sans-serif;
+    background-image:
+      radial-gradient(1200px 600px at 80% -10%, rgba(225, 6, 0, .18), transparent 60%),
+      repeating-linear-gradient(135deg, rgba(255,255,255,.015) 0 2px, transparent 2px 14px);
+  }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 48px 24px 80px; }
+  .logo {
+    display: inline-block; background: #e10600; color: #fff; font-weight: 900; font-style: italic;
+    padding: 6px 18px; letter-spacing: .1em; font-size: 22px; clip-path: polygon(0 0, 100% 0, 92% 100%, 0 100%);
+  }
+  h1 { font-style: italic; letter-spacing: .04em; margin: 18px 0 4px; font-size: 30px; }
+  .sub { color: #9a9aa5; margin: 0 0 30px; font-size: 14px; }
+  .sub b { color: #ffd500; font-weight: 600; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+  a.card {
+    display: block; text-decoration: none; color: inherit;
+    background: linear-gradient(180deg, #17171f, #101016);
+    border: 1px solid rgba(255,255,255,.09); border-left: 4px solid #e10600;
+    border-radius: 8px; padding: 14px 16px; transition: transform .15s, border-color .15s;
+  }
+  a.card:hover { transform: translateY(-2px); border-color: rgba(255,213,0,.55); border-left-color: #ffd500; }
+  .card .t { font-weight: 700; font-size: 16px; letter-spacing: .02em; }
+  .card .d { color: #9a9aa5; font-size: 12.5px; margin-top: 4px; line-height: 1.45; }
+  .tip { margin-top: 28px; color: #9a9aa5; font-size: 13px; line-height: 1.7; }
+  .tip code { background: #1b1b24; border: 1px solid rgba(255,255,255,.1); border-radius: 4px; padding: 1px 7px; font-size: 12px; color: #ffd500; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <span class="logo">ERC</span>
+    <h1>Telemetrie-Demo</h1>
+    <p class="sub">Alle Overlay-Seiten mit <b>Dummy-Daten</b> (Fake-Rennen in Spa, 8 Fahrer). Vollbild: <b>F11</b>.</p>
+    <div class="grid">
+      <a class="card" href="broadcast.html">
+        <div class="t">Broadcast</div>
+        <div class="d">Die volle Show: Timing-Tower, Player-Strip, Streckenkarte, Race-Control. Skaliert automatisch aufs Fenster.</div>
+      </a>
+      <a class="card" href="cockpit.html">
+        <div class="t">Kommentar-Cockpit (Board)</div>
+        <div class="d">Die Bühnenversion: Duelle, Race-Control, Schnellste Runden, Boxen &amp; Ärger, Wetter, Movers.</div>
+      </a>
+      <a class="card" href="cockpit.html?spalte=1">
+        <div class="t">Cockpit-Spalte</div>
+        <div class="d">Die schmale 600px-Spalte für den Kommentar-Stream — schmal und scrollbar.</div>
+      </a>
+      <a class="card" href="alerts.html">
+        <div class="t">Kommentar-Alerts</div>
+        <div class="d">Transparente Vollfläche: Battle-Popup, Event-Banner, Flaggen-Streifen, KI-Kommentar-Popup — poppt automatisch. (Weißer Hintergrund = transparent im Stream.)</div>
+      </a>
+      <a class="card" href="commentary.html">
+        <div class="t">Spickzettel</div>
+        <div class="d">Kompakt-Panel fürs Kommentieren: Battles, Movers, FL, Pits, älteste Reifen, Wetter.</div>
+      </a>
+      <a class="card" href="commentator.html">
+        <div class="t">AI-Kommentator</div>
+        <div class="d">Laufender Kommentar-Feed (in der Demo mit Fake-Zeilen gefüttert).</div>
+      </a>
+      <a class="card" href="h2h.html">
+        <div class="t">Head-to-Head</div>
+        <div class="d">Zwei Fahrer direkt verglichen: Runden, Sektoren, Reifen, Box.</div>
+      </a>
+      <a class="card" href="telemetry.html">
+        <div class="t">Telemetrie</div>
+        <div class="d">Spieler vs. Rivale: Tempo, Gang, Pedals, ERS, Fuel, Reifen.</div>
+      </a>
+      <a class="card" href="tyres.html">
+        <div class="t">Reifen-Heatmap</div>
+        <div class="d">Mischung, Verschleiß und Schaden fürs ganze Feld.</div>
+      </a>
+      <a class="card" href="relative.html">
+        <div class="t">Relative</div>
+        <div class="d">Fenster rund um deinen Spieler mit Abständen.</div>
+      </a>
+      <a class="card" href="standings.html">
+        <div class="t">Standings</div>
+        <div class="d">Die komplette Zeittabelle mit Sektoren, Gaps, Strafen.</div>
+      </a>
+      <a class="card" href="race-control.html">
+        <div class="t">Race Control</div>
+        <div class="d">Der Event-Feed: FL, Strafen, Ausfälle — alle ~12 s kommt etwas.</div>
+      </a>
+      <a class="card" href="timing-tower.html">
+        <div class="t">Timing Tower</div>
+        <div class="d">Der klassische Tower mit Positionswechsel-Pfeilen und Stopp-Marken.</div>
+      </a>
+      <a class="card" href="player-card.html">
+        <div class="t">Player Card</div>
+        <div class="d">Deine Karte in 640×400 — Design-Größe wie im Stream.</div>
+      </a>
+      <a class="card" href="map.html">
+        <div class="t">Streckenkarte</div>
+        <div class="d">Minimap mit allen Autos auf der Runde.</div>
+      </a>
+      <a class="card" href="grid.html">
+        <div class="t">Startaufstellung</div>
+        <div class="d">Grid im F1-TV-Look mit Fahrernamen &amp; Teams von erdi-erc.de (automatisches Namens-Matching).</div>
+      </a>
+      <a class="card" href="championship.html">
+        <div class="t">Meisterschaft</div>
+        <div class="d">Fahrer- und Teamwertung der ERC-Saison — echte Punkte von erdi-erc.de.</div>
+      </a>
+      <a class="card" href="lower-thirds.html?titel=ERDI greift P1 an&unter=Demo des manuellen Lower Thirds&art=KAMPF UM DIE FÜHRUNG">
+        <div class="t">Lower Thirds</div>
+        <div class="d">Banner unten links: FL, Strafen, Ausfälle &amp; Angriffe automatisch; eigene Texte per URL (?titel=...&amp;unter=...).</div>
+      </a>
+    </div>
+    <p class="tip">
+      Demo-Server starten: <code>node tools/demo-server.js 8091</code> (aus dem Repo-Root) —
+      die Seiten verbinden sich von selbst. Die Daten laufen in Dauerschleife:
+      Atem-Abstände, Boxenstop-Fenster, Gelbphase, Events, Regen-Forecast.
+    </p>
+  </div>
+</body>
+</html>

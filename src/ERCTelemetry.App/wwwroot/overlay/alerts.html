@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>ERCTelemetry — Kommentar-Alerts</title>
+<link rel="stylesheet" href="overlay.css">
+<style>
+  /* Kommentar-Alerts - automatische Popups fuer den Kommentator:
+     Duell-Warner unten, Event-Banner und Flaggen oben. Haengt am WebSocket
+     und poppt ohne Klick; in Streamlabs als transparente Browser-Quelle
+     ueber das Spielbild legen (Design-Canvas 3440x1440, vh/vw-Skalierung). */
+  html, body {
+    margin: 0; padding: 0; overflow: hidden;
+    background: transparent;
+    font-family: 'Orbitron', 'Bahnschrift SemiBold Condensed', 'Bahnschrift', sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  body { pointer-events: none; }
+
+  /* Flaggen-Streifen (oben, dauerhaft solange aktiv) */
+  #flag {
+    position: absolute; top: 2.4vh; left: 50%; transform: translateX(-50%);
+    display: none; align-items: center; gap: 1.4vh;
+    font-style: italic; font-weight: 900; font-size: 2.2vh;
+    letter-spacing: .18em; text-transform: uppercase; color: #15151b;
+    padding: 1.1vh 3.4vh; border-radius: .5vh;
+    box-shadow: 0 .6vh 2.6vh rgba(0,0,0,.5);
+  }
+  #flag.an { display: flex; animation: flagRein .45s cubic-bezier(.2,.9,.25,1) both; }
+  #flag.gelb { background: linear-gradient(180deg, #ffe14d, var(--overlay-gold)); }
+  #flag.gelb::before, #flag.gelb::after {
+    content: ''; width: 2.6vh; height: 2.6vh; flex: none;
+    background: repeating-conic-gradient(#15151b 0% 25%, transparent 0% 50%);
+    background-size: 1.3vh 1.3vh;
+  }
+  #flag.blau { background: linear-gradient(180deg, #5ec2ff, #2b8fd9); color: #08202f; }
+  #flag.gruen { background: linear-gradient(180deg, #7ce8a2, #2fbf6a); color: #06281a; }
+  #flag.gruen::before { content: '\2713\00a0\00a0'; }
+
+  /* Event-Banner (oben, eines nach dem anderen) */
+  #banner {
+    position: absolute; top: 9.2vh; left: 50%;
+    transform: translateX(-50%) translateY(-140%);
+    display: flex; align-items: center; gap: 2vh;
+    background: linear-gradient(180deg, #14141c, #0b0b10);
+    border: 1px solid rgba(255,255,255,.12);
+    border-left: .6vh solid var(--overlay-accent);
+    border-radius: .5vh; padding: 1.6vh 3.2vh;
+    box-shadow: 0 1.2vh 4.4vh rgba(0,0,0,.65);
+    transition: transform .5s cubic-bezier(.2,.9,.25,1), opacity .4s;
+    opacity: 0;
+  }
+  #banner.an { transform: translateX(-50%) translateY(0); opacity: 1; }
+  #banner .label {
+    font-style: italic; font-weight: 900; font-size: 2.3vh;
+    letter-spacing: .12em; text-transform: uppercase; white-space: nowrap;
+  }
+  #banner .text {
+    font-weight: 600; font-size: 2vh; color: var(--overlay-text); white-space: nowrap;
+  }
+  #banner.rot .label { color: #ff6b64; }
+  #banner.gold .label { color: var(--overlay-gold); }
+  #banner.gruen .label { color: #7ce8a2; }
+  #banner.checker::after {
+    content: ''; width: 5.2vh; height: 2.6vh; flex: none;
+    background: repeating-conic-gradient(#f5f5f5 0% 25%, #15151b 0% 50%);
+    background-size: 2.6vh 2.6vh; border-radius: .3vh;
+    animation: kariert 1.6s linear infinite;
+  }
+
+  /* Duell-Popup (unten, heisseste Paarung) */
+  #duell {
+    position: absolute; bottom: 6vh; left: 50%;
+    transform: translateX(-50%) translateY(180%);
+    display: flex; align-items: center; gap: 2.2vh;
+    background: linear-gradient(180deg, #14141c, #0b0b10);
+    border: 1px solid rgba(255,255,255,.12);
+    border-left: .6vh solid var(--overlay-accent);
+    border-radius: .5vh; padding: 1.6vh 3.2vh;
+    box-shadow: 0 1.2vh 4.4vh rgba(0,0,0,.65);
+    transition: transform .5s cubic-bezier(.2,.9,.25,1), opacity .4s;
+    opacity: 0;
+  }
+  #duell.an { transform: translateX(-50%) translateY(0); opacity: 1; }
+  #duell .label {
+    font-style: italic; font-weight: 900; font-size: 1.8vh;
+    letter-spacing: .22em; text-transform: uppercase; color: var(--overlay-accent);
+    white-space: nowrap;
+  }
+  #duell .pos { font-weight: 700; font-size: 1.8vh; color: var(--overlay-muted); white-space: nowrap; }
+  #duell .name { font-weight: 700; font-size: 2.3vh; color: var(--overlay-text); white-space: nowrap; }
+  #duell .vs { font-weight: 400; font-size: 1.7vh; color: var(--overlay-muted); }
+  #duell .gap {
+    font-weight: 900; font-size: 3.2vh; color: var(--overlay-gold);
+    font-variant-numeric: tabular-nums; min-width: 9.5vh; text-align: right;
+  }
+  #duell.heiss .gap { animation: gapPuls .8s ease-in-out infinite; }
+  #duell.heiss { border-left-color: var(--overlay-gold); }
+  @keyframes gapPuls { 50% { opacity: .45; } }
+
+  /* Kommentar-Popup (unten rechts, AI-Kommentarzeilen statt TTS) */
+  #kommentar {
+    position: absolute; bottom: 13vh; right: 3.2vw;
+    max-width: 44vw; display: flex; align-items: flex-start; gap: 1.8vh;
+    background: linear-gradient(180deg, #14141c, #0b0b10);
+    border: 1px solid rgba(255,255,255,.12);
+    border-left: .6vh solid var(--overlay-gold);
+    border-radius: .5vh; padding: 1.5vh 2.6vh;
+    box-shadow: 0 1.2vh 4.4vh rgba(0,0,0,.65);
+    transition: transform .5s cubic-bezier(.2,.9,.25,1), opacity .4s;
+    opacity: 0; transform: translateX(130%);
+  }
+  #kommentar.an { transform: translateX(0); opacity: 1; }
+  #kommentar .label {
+    font-style: italic; font-weight: 900; font-size: 1.5vh;
+    letter-spacing: .2em; text-transform: uppercase; color: var(--overlay-gold);
+    white-space: nowrap; padding-top: .4vh; flex: none;
+  }
+  #kommentar .text {
+    font-weight: 600; font-size: 2vh; line-height: 1.35; color: var(--overlay-text);
+  }
+
+  @keyframes flagRein { from { opacity: 0; transform: translateX(-50%) translateY(-60%); } }
+  @keyframes kariert { to { background-position: 5.2vh 0; } }
+
+  /* Demo-Hinweis */
+  .hinweis {
+    position: absolute; bottom: 1.2vh; left: 50%; transform: translateX(-50%);
+    font-size: 1.2vh; letter-spacing: .3em; color: rgba(255,255,255,.25);
+    text-transform: uppercase;
+  }
+</style>
+</head>
+<body>
+  <div id="flag"></div>
+  <div id="banner"><span class="label"></span><span class="text"></span></div>
+  <div id="duell">
+    <span class="label">Battle</span>
+    <span class="pos"></span>
+    <span class="name a"></span><span class="vs"> vs </span><span class="name b"></span>
+    <span class="gap">-</span>
+  </div>
+  <div id="kommentar"><span class="label">ERC · Mikrofon</span><span class="text"></span></div>
+  <div class="hinweis" hidden></div>
+
+  <script src="overlay.js"></script>
+  <script>
+    (function () {
+      'use strict';
+      var fmt = window.overlayFormat;
+      var $ = function (id) { return document.getElementById(id); };
+      var demo = /[?&]demo=1/.test(location.search);
+      if (demo) document.body.classList.add('demo');
+
+      /* Flaggen-Streifen: gelb (3) / blau (2) / gruen (1) aus den
+         Marshal-Zones — dauerhaft sichtbar, solange eine Flagge weht. */
+      function setzeFlaggen(s) {
+        var el = $('flag');
+        var zonen = (s && s.marshalZones) || [];
+        var gelb = [], blau = [], gruen = [];
+        zonen.forEach(function (zone, i) {
+          if (zone.flag === 3) gelb.push(i + 1);
+          else if (zone.flag === 2) blau.push(i + 1);
+          else if (zone.flag === 1) gruen.push(i + 1);
+        });
+        if (gelb.length) {
+          el.className = 'an gelb';
+          el.textContent = 'Gelbe Flagge · Zone ' + gelb.join(', ');
+        } else if (blau.length) {
+          el.className = 'an blau';
+          el.textContent = 'Blaue Flagge · Zone ' + blau.join(', ');
+        } else if (gruen.length) {
+          el.className = 'an gruen';
+          el.textContent = 'Grün · freie Fahrt';
+        } else {
+          el.className = '';
+          el.textContent = '';
+        }
+      }
+
+      /* Event-Banner: ein Banner auf einmal, Warteschlange, jedes bleibt
+         einige Sekunden und faehrt dann wieder raus. */
+      var bannerWarteschlange = [];
+      var bannerBis = 0;
+      function bannerHinzu(klasse, text, dauerMs) {
+        if (bannerWarteschlange.length >= 3) bannerWarteschlange.shift();
+        bannerWarteschlange.push({ klasse: klasse, label: labelFuer(klasse), text: text, dauer: dauerMs || 6500 });
+        zeigeNaechstesBanner();
+      }
+      function labelFuer(klasse) {
+        switch (klasse) {
+          case 'gold': return 'Fastest Lap';
+          case 'rot': return 'Ausfall';
+          case 'gelb': return 'Strafe';
+          case 'gruen': return 'Lights Out';
+          case 'checker': return 'Zielflagge';
+          default: return 'Race Control';
+        }
+      }
+      function zeigeNaechstesBanner() {
+        var el = $('banner');
+        if (Date.now() < bannerBis || !bannerWarteschlange.length) return;
+        var b = bannerWarteschlange.shift();
+        el.className = b.klasse;
+        el.querySelector('.label').textContent = b.label;
+        el.querySelector('.text').textContent = b.text;
+        requestAnimationFrame(function () { el.classList.add('an'); });
+        bannerBis = Date.now() + (b.dauer || 6500) + 500;
+        setTimeout(function () {
+          el.classList.remove('an');
+          setTimeout(zeigeNaechstesBanner, 600);
+        }, b.dauer || 6500);
+      }
+
+      /* Event-Typen auf Banner mappen (PB zu haeufig — bewusst ohne Banner) */
+      function eventBanner(ev) {
+        switch (ev.type) {
+          case 'fastest-lap': bannerHinzu('gold', ev.text, 6000); break;
+          case 'retirement': bannerHinzu('rot', ev.text, 6500); break;
+          case 'penalty': bannerHinzu('gelb', ev.text, 6500); break;
+          case 'race-winner': bannerHinzu('gold', ev.text, 8000); break;
+          case 'session-started': bannerHinzu('gruen', 'LIGHTS OUT — LOS GEHT’S', 4500); break;
+          case 'session-ended': bannerHinzu('checker', 'ZIELFLAGGE', 10000); break;
+        }
+      }
+
+      /* Duell-Warner: heisseste Paarung (kleinste Luecke < 600 ms). Hysterese:
+         ab 600 ms rein, erst unter 900 ms wieder raus, damit das Popup nicht
+         flackert. Unter 300 ms pulsiert der Abstand. */
+      var duellSichtbar = false;
+      function setzeDuell(reihen) {
+        var best = null;
+        for (var i = 1; i < reihen.length; i++) {
+          var back = reihen[i], front = reihen[i - 1];
+          if (back.pitStatus !== 'None' || front.pitStatus !== 'None') continue;
+          if (back.gapToCarInFrontMs > 0 && back.gapToCarInFrontMs < 1000 &&
+              (!best || back.gapToCarInFrontMs < best.gap)) {
+            best = { gap: back.gapToCarInFrontMs, front: front, back: back };
+          }
+        }
+        var el = $('duell');
+        if (!best) {
+          if (duellSichtbar) { el.classList.remove('an'); duellSichtbar = false; }
+          return;
+        }
+        if (!duellSichtbar && best.gap >= 600) return; // Hysterese
+        el.querySelector('.pos').textContent = 'P' + best.front.position + '/' + best.back.position;
+        el.querySelector('.name.a').textContent = best.front.name;
+        el.querySelector('.name.b').textContent = best.back.name;
+        el.querySelector('.gap').textContent = (best.gap / 1000).toFixed(3) + 's';
+        el.classList.toggle('heiss', best.gap < 300);
+        el.classList.add('an');
+        duellSichtbar = true;
+      }
+
+      /* Kommentar-Popup: AI-Zeilen statt TTS — eine nach der anderen, 8 s
+         sichtbar, Rueckstand wird verworfen (Livetext schlaegt Warteschlange). */
+      var kommentarBis = 0, kommentarWarteschlange = [];
+      function zeigeKommentar(text) {
+        if (!text) return;
+        if (kommentarWarteschlange.length >= 2) kommentarWarteschlange = [text];
+        else kommentarWarteschlange.push(text);
+        kommentarArbeiten();
+      }
+      function kommentarArbeiten() {
+        var el = $('kommentar');
+        if (Date.now() < kommentarBis || !kommentarWarteschlange.length) return;
+        var text = kommentarWarteschlange.shift();
+        el.querySelector('.text').textContent = text;
+        el.classList.add('an');
+        kommentarBis = Date.now() + 8500;
+        setTimeout(function () {
+          el.classList.remove('an');
+          kommentarBis = Date.now() + 500;
+          setTimeout(kommentarArbeiten, 600);
+        }, 8500);
+      }
+
+      function onState(msg) {
+        var reihen = (msg.standings || []).filter(function (r) {
+          return r.resultStatus !== 'Retired' && r.resultStatus !== 'DidNotFinish';
+        });
+        setzeFlaggen(msg.session);
+        setzeDuell(reihen);
+      }
+
+      /* Demo-Modus: Design-Preview ohne laufendes Rennen */
+      function demoDaten() {
+        var namen = ['LeutnantKW', 'Erdi', 'Vettel_Fan', 'Kerbstrecke-Kai'];
+        var gaps = [0, 280, 940, 120];
+        function reihen(gapFaktor) {
+          return namen.map(function (name, i) {
+            return {
+              position: i + 1, name: name, currentLapNum: 12,
+              gapToCarInFrontMs: i === 1 ? Math.round(gaps[1] * gapFaktor) : gaps[i],
+              pitStatus: 'None', resultStatus: 'Active'
+            };
+          });
+        }
+        setzeFlaggen({ marshalZones: [{ zoneStart: 0, flag: 3 }, { zoneStart: 0.4, flag: 0 }] });
+        bannerHinzu('gold', 'Schnellste Runde: Erdi — 1:51.234', 6000);
+        bannerHinzu('gelb', '5 s Zeitstrafe: Kerbstrecke-Kai', 6500);
+        bannerHinzu('rot', 'Ausfall: Boxenstop (Technik)', 6500);
+        onState({ standings: reihen(1) });
+        // Duell-Loop: Luecke atmet 0.28s <-> 0.52s, Flaggen wechseln alle 6 s
+        var t = 0;
+        setInterval(function () {
+          t++;
+          onState({ standings: reihen(t % 8 < 5 ? 1 : 1.9) });
+          if (t % 6 === 0) {
+            setzeFlaggen({ marshalZones: [{ zoneStart: 0, flag: t % 12 === 6 ? 1 : 0 }] });
+          }
+        }, 1000);
+      }
+
+      var hinweis = document.querySelector('.hinweis');
+      if (demo) {
+        hinweis.hidden = false;
+        hinweis.textContent = 'Demo · alerts.html';
+        demoDaten();
+        var demoZeilen = [
+          'Kampf an der Spitze: LeutnantKW und Erdi liegen unter einer Zehntel!',
+          'Kerbstrecke-Kai kassiert 5 Sekunden - Track Limits.',
+          'Regen kommt in rund 15 Minuten - Stint-Rechnung wird spannend.',
+        ];
+        var zi = 0;
+        setInterval(function () { zeigeKommentar(demoZeilen[zi % demoZeilen.length]); zi++; }, 9500);
+        setTimeout(function () { zeigeKommentar('Lights out und away we go - Rennen in Spa!'); }, 2000);
+      } else {
+        window.connectOverlay({
+          onState: onState,
+          onEvent: eventBanner,
+          onCommentary: function (msg) { zeigeKommentar(msg.text); },
+        });
+      }
+    })();
+  </script>
+</body>
+</html>

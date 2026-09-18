@@ -15,10 +15,17 @@ Desktop app for EA F1 26 (also F1 25 with the "2026 Season Pack" UDP format) tha
 3. Stream overlays: OBS browser source (local web server) AND transparent WPF overlay window
 4. SQLite session history + JSON/CSV export + shareable session pages + collision clips
 
-## Current state (last verified: 2026-09-16)
+## Current state (last verified: 2026-09-17)
 
 **All phases 0–6 complete.** `dotnet build` clean (0 warnings), `dotnet test` green
-(785 Core + 63 ShareServer tests). **Clip-Pipeline E2E-verifiziert (2026-09-16):** der komplette
+(801 Core + 79 ShareServer tests). **S2 Login-Härtung (2026-09-17):** beide Twitch-/Discord-Logins sind
+an einen Per-Install-Possession-Nachweis gebunden (eigener Abschnitt unten). Beide Reviews
+(Code + Security) grün — deren Findings umgesetzt: Onboarding-Race geschlossen (GetOrAdd statt
+Last-Writer-Wins), installSecrets-Eviction (1-h-Idle-Sweep), App-Self-Heal bei verlorenem Secret
+(Start-403 → frische Install-Id + einmaliger Retry), `AppSettingsService.Update` nun thread-safe,
+`Cache-Control: no-store` auf den Status-Antworten mit Token. **Punkt-4-Rest:** der
+InGameOverlay-Timer stoppt bei Close; die Update-Log-Markierung liegt jetzt unter der IO-Sicherung.
+**Clip-Pipeline E2E-verifiziert (2026-09-16):** der komplette
 Encode-Pfad ist headless gegen das gebündelte `ffmpeg.exe` getestet (`EncodePipelineTests`) —
 „gesunder Clip" enkodiert zur Echtzeit-Dauer (~20 s Fenster → ~20 s MP4, h264+aac, schlägt fehl
 wenn der 2x-Speed-Bug zurückkehrt) und „Audio kürzer als Video" übersteht den ‑shortest-
@@ -28,6 +35,20 @@ gelöscht zu werden). Dazu robustness fixes im Capture-Pfad: Auto-Restart nach 3
 .NET-Projection), Kill/Delete-Race beim ffmpeg-Cancel geschlossen, WAV-Fehler räumen das Temp.
 App-Start-Smoke-Test ok (einzig erwartbare Twitch-Token-Ablehnung im Log). **Offen:** Live-Test im
 echten Online-Rennen (Checkliste in `docs/CLIPS-PIPELINE.md`).
+**S2 OAuth-Possession-Härtung (2026-09-17):** beide Login-Handshakes (Twitch, Discord)
+hängen jetzt an einer Per-Install-Possession-Bindung. Die App erzeugt beim ersten Login eine
+32-hex `InstallId`, der Server onboardet sie beim ersten `/…/login/start` mit einem 64-hex
+`installSecret` (256 Bit), das die App DPAPI-verschlüsselt persistiert. Jeder `start`/`status`/
+`delete` muss dieselbe Install-Id **und** das registrierte Secret (FixedTimeEquals) präsentieren —
+ein Skript mit nur dem öffentlichen Upload-Token kann seine eigene frische Install onboarden,
+aber nie für eine Fremd-Install handeln (dokumentierter Residual). Die Server-Registry ist
+in-memory (Restart → App re-onboardet beim nächsten Login) und wird per 1-h-Idle-Sweep evictet.
+Die Onboarding-Race bei parallelen Erst-Kontakten derselben frischen Id ist via GetOrAdd
+geschlossen; verliert die App ihr Secret, wirft sie die Bindung beim nächsten Start-403
+self-healend weg (frische Id + einmaliger Retry). Security-Review: kein CRITICAL; restliche
+Hinweise sind operational (hinter Cloudflare-Tunnel sollte `Share__ForwardedHeaders` an sein,
+sonst teilen sich alle echten Nutzer EIN Rate-Limit-Budget) oder dokumentierte Residuals
+(Start-Endpoint verrät Id-Bekanntheit; DELETE bleibt idempotent-204).
 **Auto-Token Session-Teilen (2026-09-11):** Enduser
 teilen Sessions ohne Token-Einrichtung — die App holt den aktuellen Server-Token über den
 neuen öffentlichen `GET /api/config` (Fallback: eingebauter `ShareConstants.DefaultToken`);
@@ -312,6 +333,8 @@ und **LLM-Layer 2 (Ollama)** umgesetzt (leichteste zuerst).
 
 | Version | Date | Inhalt |
 |---|---|---|
+| 0.7.0 | 2026-09-18 | **F1-Broadcast-Paket** (Kommentatoren-Stream): 4 neue Overlay-Seiten — `grid.html` (Startaufstellung im F1-TV-Look, Teamfarben, auto gridPosition), `championship.html` (Fahrer- + Teamwertung der ERC-Saison), `lower-thirds.html` (TV-Banner unten links: FL/Strafe/Ausfall/Box/Angriff-auf-P1 automatisch + manuell per URL-Parameter), Kommentar-Popup in `alerts.html` („ERC · Mikrofon", onCommentary, statt TTS — TTS-Sprecher-Prototyp verworfen). Fahrerdaten von erdi-erc.de: `tools/erc-drivers.js` (Scraper: Teams → /Profile/<discord-id>, 74 Profile → `wwwroot/overlay/data/erc-drivers.json`, Cache 6 h, `--frisch`) + `erc-names.js` Matcher (`window.ercNames.zuFahrer()`). Fix: telemetry.html `trackTemperature` („undefined °C"). Zusätzlich außerhalb der App: `tools/regie.js` Auto-Regie (SLOBS-Szenenschaltung, Protokoll aus app.asar verifiziert), F1-Themepack (9 Szenen). Release-Gate: 0 Warnungen, 801 Tests grün, Upload verifiziert. **Offen:** neue Overlays in Streamlabs-Szenen einbinden (f1-themepack-JSON), `erc-drivers.js --frisch` vor Liga-Rennen |
+| 0.6.4.2 | 2026-09-17 | **Login-Härtung + Stabilitätspaket**: Twitch/Discord-Logins gegen fremde Zugriffe abgesichert (S2 — Per-Install-Nachweis: geräteeigener Install-Schlüssel für Start/Status/Löschen, Onboarding-Race via GetOrAdd geschlossen, 1-h-Idle-Eviction der Secret-Registry, App-Self-Heal bei verlorenem Secret, `Cache-Control: no-store` auf Token-Antworten); Overlay-XSS-Härtung (Escaping + CSP); Stabilitäts-Fixes (TelemetryDb-Concurrency, Clip-Capture-Neustart nach Geräteverlust, JPEG-Throttle, sauberer Teardown inkl. Overlay-Timer, Task-Fault/Update-Log-IO-Logging). Release-Gate: 0 Warnungen, 801 Core + 79 ShareServer-Tests grün, Upload verifiziert. **Offen:** Live-Test Clip-Pipeline im echten Rennen |
 | 0.6.4.1 | 2026-09-11 | **Session teilen ohne Token-Einrichtung**: Enduser teilen Aufnahmen ohne Konfiguration — die App holt den Server-Schlüssel automatisch über den öffentlichen ShareServer-Endpoint `GET /api/config` (Settings-Override behält Vorrang, Fallback = eingebauter `ShareConstants.DefaultToken`, jetzt auf den echten Server-`Share__Token` gesetzt); robustere Token-Auflösung (letzter gültiger Schlüssel bei Server-Ausfall statt Default-Degradierung, Cancellation wird nie geschluckt, ein Resolver/Host statt pro Login). Server-Build mit `/api/config` **deployed & live** (ShareServer-Deploy siehe Abschnitt oben) |
 | 0.6.4 | 2026-09-11 | **Session teilen mit großen Clips** (Fix): Cloudflare-Free-Limit (100 MB pro Request) umgangen — Clips >100 MB lädt die App jetzt in ≤80-MB-Teilen hoch (`PUT ?part=N&parts=M`), der ShareServer setzt sie serverseitig zusammen; „Teilen fehlgeschlagen: Error while copying to a stream" bei großen Clips behoben. Server-Build mit Chunk-Protokoll bereits deployed (siehe ShareServer-Abschnitt) |
 | 0.6.3 | 2026-09-11 | **ERC-Integration**: Ergebnis nach Liga-Rennen an erdi-erc.de senden („Ergebnis an erdi-erc.de senden?“-Dialog, Liga wählen → Entwurf für den Admin; persönlicher API-Key), Discord-Login (OAuth via ShareServer, Token nur im RAM), Track-Setups (Setups-Tab → ERC1-Share-Code für F1 26, Zugriff über Discord-Gilde); **Sprachausgabe-Timing** — Ansagen im richtigen Moment, veraltete werden verworfen, nach Zielflagge keine veraltete Live-Analyse |

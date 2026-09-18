@@ -1,5 +1,58 @@
 # Update-Log — ERCTelemetry
 
+## 0.7.0 — Beta (2026-09-18)
+
+### Neu
+- **Startaufstellungs-Overlay** (`grid.html`): das Startgrid im TV-Look mit
+  Positionskästen (P1 rot, P2/P3 in Silber/Bronze), Startnummern und Team-Farb­balken.
+  Sortiert automatisch nach Startposition, sonst nach fahrender Reihenfolge.
+- **Meisterschafts-Overlay** (`championship.html`): Fahrer- und Teamwertung der
+  ERC-Saison nebeneinander. Die Punkte kommen direkt von erdi-erc.de.
+- **Fahrerdaten von erdi-erc.de**: neue Overlay-Seiten holen sich automatisch
+  Fahrernamen, Teams und Saisonpunkte von der ERC-Website und erkennen so die
+  Ingame-Namen der Liga wieder (einfaches Nachladen, ohne Neustart der App).
+- **Lower-Thirds-Overlay** (`lower-thirds.html`): TV-Banner unten links —
+  automatisch für Schnellste Runde, Strafen, Ausfälle, Boxenstopps und
+  Angriffe auf die Führung; eigene Texte per URL-Parameter möglich.
+- **Kommentar-Popup im Alerts-Overlay**: KI-Kommentarzeilen erscheinen jetzt
+  unten rechts als Banner („ERC · Mikrofon"), statt nur im Spickzettel.
+
+### Behoben
+- Wetter-Anzeige im Telemetrie-Overlay zeigte „undefined °C" an der
+  Streckentemperatur.
+
+### Bekannte Grenzen
+- Die Fahrerdaten werden bei jedem Overlay-Start von erdi-erc.de geladen;
+  ist die Seite nicht erreichbar, laufen die Overlays mit den reinen
+  Ingame-Namen weiter.
+- Eine Komplettübersicht aller Fahrer-Zuordnungen (Ingame-Name ↔ Website-Profil)
+  braucht die Profile auf erdi-erc.de mit hinterlegtem Ingame-Namen.
+
+## 0.6.4.2 — Beta (2026-09-17)
+
+### Behoben
+- **Sicherheit der Overlay-Seiten**: Chat- und Renn-Texte werden jetzt sicher maskiert, und
+  der lokale Overlay-Server sendet eine strikte Inhalts-Richtlinie. So kann auf der
+  Browser-Quelle / dem Overlay-Fenster kein fremder Code mehr ausgeführt werden, selbst wenn
+  ein Text von außen eingebettet werden sollte.
+- **Sicherer Twitch- & Discord-Login**: Die App meldet sich beim Login jetzt mit einem
+  geräteeigenen „Install-Schlüssel“ (wird automatisch erzeugt und verschleiert gespeichert).
+  Jemand, der nur den öffentlichen Server-Schlüssel kennt, kann damit keine fremden Logins
+  mehr starten, deren Ergebnis abrufen oder sie abbrechen.
+- **Session-Datenbank**: Parallele Zugriffe (zum Beispiel Rennen läuft und History wird
+  exportiert) führen nicht mehr zu Datenbankfehlern oder blockierten Abläufen.
+- **Clip-Aufnahme**: Nach einem Bildschirm-/RDP-Wechsel startet die Aufnahme automatisch neu,
+  statt in eine Dauerschleife mit defekten Clips zu geraten; Bildraten werden vor dem
+  Speichern stabilisiert.
+- **Beenden der App**: Tray-Icon, Timer und Hintergrundaufgaben werden beim Beenden sauber
+  geschlossen — es bleibt kein versteckter Prozess/Timer mehr zurück.
+- Fehler beim Speichern der Einstellungen und Fehler in Hintergrundaufgaben werden jetzt
+  sichtbar protokolliert, statt still verschluckt zu werden.
+
+### Bekannte Grenzen
+- Der finale Live-Test der Clip-Aufnahme in einem echten Online-Rennen ist noch nicht
+  abgeschlossen (Checkliste in `docs/CLIPS-PIPELINE.md`).
+
 ## 0.6.4.1 — Beta (2026-09-11)
 
 ### Neu

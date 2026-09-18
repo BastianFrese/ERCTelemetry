@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>ERCTelemetry — Kommentar-Cockpit</title>
+<!--
+  Kommentator-Cockpit fürs Live-Streaming (ERC F1 Look, passend zum
+  f1-themepack): die wichtigsten Renndaten auf einen Blick.
+
+  Layouts (URL-Parameter):
+    cockpit.html            → Full-Board 3440×1440 (Szene „ERC · Info-Board“)
+    cockpit.html?spalte=1   → schlanke Spalte 600×1440 fürs Kommentieren
+                              über dem Spielbild (Szene „Live · ERC Kommentar“)
+    cockpit.html?demo=1     → Demo-Daten ohne laufendes Rennen (Design-Preview)
+
+  Daten über denselben Vertrag wie alle Overlay-Seiten (connectOverlay,
+  siehe README.md). Alle Animationen rein CSS; der Feed wird per JS
+  neu aufgebaut.
+-->
+<link rel="stylesheet" href="overlay.css">
+<style>
+:root {
+    --gold: var(--overlay-gold, #ffd500);
+    --rot: var(--overlay-accent, #e10600);
+}
+
+/* ── Grundbrett ─────────────────────────────────────────────────
+   Full-Board: eigene Carbon-Bühne. Spalten-Modus: transparent, das
+   Spielbild scheint durch, nur die Widgets malen. */
+body.board {
+    width: 100vw; height: 100vh; overflow: hidden;
+    background:
+        radial-gradient(ellipse 74% 62% at 50% 30%,
+          rgba(225, 6, 0, .09) 0%, rgba(225, 6, 0, .03) 44%, transparent 70%),
+        linear-gradient(180deg, #0b0b10 0%, #12121a 55%, #0a0a0e 100%);
+    padding: 4vh 3vw;
+}
+body.board::before {
+    content: ''; position: fixed; inset: 0; pointer-events: none;
+    background:
+      repeating-linear-gradient(45deg,  rgba(255,255,255,.015) 0 2px, transparent 2px 7px),
+      repeating-linear-gradient(-45deg, rgba(255,255,255,.009) 0 2px, transparent 2px 7px);
+}
+body.spalte { padding: 0; }
+/* Spalten-Modus: kompakter Kopf (Wetter steht unten ohnehin im eigenen
+   Kasten), Flaggen-Banner darf in die nächste Zeile umbrechen. */
+body.spalte .kopf {
+    flex-wrap: wrap; gap: 1.4vh;
+    margin: 1.6vh; padding: 1.4vh 1.8vh;
+}
+body.spalte .kopf .cond { display: none; }
+body.spalte .kopf .session { font-size: 2.1vh; }
+body.spalte .kopf .uhr { font-size: 2.8vh; }
+body.spalte .raster { margin: 0 1.6vh 1.6vh; }
+body.spalte .flagbanner { font-size: 1.7vh; }
+
+/* Kerbstreifen unten — nur im Board-Modus */
+body.board::after {
+    content: ''; position: fixed; left: 0; right: 0; bottom: 0; height: 1.6vh;
+    background: repeating-linear-gradient(135deg,
+      var(--rot) 0 3.4vh, #f5f5f5 3.4vh 6.8vh);
+    opacity: .92;
+}
+
+/* ── Kopfbalken ───────────────────────────────────────────── */
+.kopf {
+    display: flex; align-items: center; gap: 2.4vh;
+    background:
+      repeating-linear-gradient(45deg, rgba(255,255,255,.02) 0 2px, transparent 2px 7px),
+      linear-gradient(180deg, #101018, #0b0b10);
+    border: 1px solid rgba(255,255,255,.10);
+    border-top: .45vh solid var(--rot);
+    border-radius: 1vh; padding: 1.6vh 2.4vh;
+    margin-bottom: 2.2vh;
+}
+.kopf .mark {
+    font-style: italic; font-weight: 900; font-size: 2.6vh; line-height: 1;
+    color: #fff; background: var(--rot);
+    padding: .5vh 1.3vh .8vh; transform: skewX(-12deg);
+    box-shadow: 0 0 2.4vh rgba(225,6,0,.4);
+}
+.kopf .session,
+.kopf .uhr {
+    font-family: 'Orbitron', 'Bahnschrift SemiBold Condensed', 'Bahnschrift', sans-serif;
+    font-variant-numeric: tabular-nums;
+}
+.kopf .session {
+    font-style: italic; font-weight: 700; font-size: 2.4vh;
+    text-transform: uppercase; letter-spacing: .08em;
+}
+.kopf .uhr {
+    font-weight: 900; font-size: 3.4vh; letter-spacing: .06em;
+}
+.kopf .cond { color: var(--overlay-muted); font-size: 1.7vh; letter-spacing: .06em; }
+.kopf .spacer { flex: 1; }
+
+/* Flaggen-Banner rechts im Kopf — blinkt im Gelb-Modus */
+.flagbanner {
+    display: none;
+    font-style: italic; font-weight: 900; font-size: 2vh;
+    letter-spacing: .14em; text-transform: uppercase;
+    padding: 1vh 2.2vh; border-radius: .8vh; color: #15151b;
+}
+.flagbanner.gelb {
+    display: block; background: var(--gold);
+    animation: flagblinken 1s steps(2, jump-none) infinite;
+}
+.flagbanner.gruen { display: block; background: var(--overlay-throttle); }
+.flagbanner.blau  { display: block; background: var(--overlay-ers); color: #fff; }
+@keyframes flagblinken {
+    50% { box-shadow: 0 0 5vh rgba(255, 213, 0, .9); opacity: .55; }
+}
+
+/* ── Spalten-Raster ─────────────────────────────────────────
+   Board: drei Spalten (Duelle | Feed | Reihen). Spalte: eins unter dem
+   anderen. */
+.raster {
+    display: grid; gap: 2.2vh; align-items: start;
+    grid-template-columns: 1.15fr 1.15fr 1fr;
+}
+body.spalte .raster { grid-template-columns: 1fr; }
+
+/* ── Widgets (lokale Variante ohne min-width) ─────────────── */
+.box {
+    background:
+      repeating-linear-gradient(45deg, rgba(255,255,255,.018) 0 2px, transparent 2px 7px),
+      linear-gradient(180deg, #101018, #0b0b10);
+    border: 1px solid rgba(255,255,255,.10);
+    border-top: .35vh solid var(--rot);
+    border-radius: .8vh; padding: 1.5vh 1.8vh;
+}
+.box > h2 {
+    display: flex; align-items: center; gap: 1.1vh;
+    margin: 0 0 1.1vh;
+    font-family: 'Orbitron', 'Bahnschrift SemiBold Condensed', 'Bahnschrift', sans-serif;
+    font-style: italic; font-weight: 900; font-size: 1.9vh;
+    letter-spacing: .1em; text-transform: uppercase; color: var(--overlay-text);
+}
+.box > h2::before {
+    content: ''; align-self: stretch; width: .45vh;
+    background: var(--rot); transform: skewX(-12deg);
+    box-shadow: 0 0 1.2vh rgba(225, 6, 0, .55);
+}
+.box > h2 .zahl {
+    margin-left: auto; font-size: 1.5vh; font-style: normal; font-weight: 600;
+    color: var(--overlay-muted); letter-spacing: .06em;
+}
+
+.leer { color: var(--overlay-muted); font-style: italic; font-size: 1.5vh; }
+
+/* ── Duell-Liste ──────────────────────────────────────────── */
+#c-duelle { display: flex; flex-direction: column; }
+.duell {
+    display: flex; align-items: baseline; gap: 1.2vh;
+    padding: .9vh 1.1vh; margin-bottom: .7vh;
+    background: rgba(255,255,255,.045);
+    border-left: .4vh solid rgba(255,255,255,.22);
+    border-radius: .4vh;
+    font-size: 1.9vh; font-variant-numeric: tabular-nums;
+    animation: reinschieben .45s cubic-bezier(.2,.9,.25,1) both;
+}
+.duell .pos {
+    font-family: 'Orbitron', 'Bahnschrift SemiBold Condensed', 'Bahnschrift', sans-serif;
+    font-weight: 700; font-size: 1.7vh; color: var(--overlay-muted);
+    min-width: 7vh;
+}
+.duell .front { font-weight: 700; }
+.duell .gap {
+    margin-left: auto; font-family: 'Orbitron', 'Bahnschrift SemiBold Condensed', sans-serif;
+    font-weight: 700; font-size: 2.1vh; color: var(--gold);
+}
+/* Heißes Duell: unter 0,3 s — der Abstand pulsiert */
+.duell.heiss {
+    border-left-color: var(--rot);
+    background: rgba(225, 6, 0, .14);
+}
+.duell.heiss .gap { animation: duellpuls .9s ease-in-out infinite; color: #ff6b62; }
+@keyframes duellpuls {
+    50% { opacity: .35; transform: scale(1.12); }
+}
+
+/* ── Race-Control-Feed ────────────────────────────────────── */
+.feed { list-style: none; margin: 0; padding: 0; }
+.feed li {
+    display: flex; gap: 1vh; align-items: baseline;
+    padding: .8vh 0; border-top: 1px solid rgba(255,255,255,.07);
+    font-size: 1.75vh;
+    animation: reinschieben .5s cubic-bezier(.2,.9,.25,1) both;
+}
+@keyframes reinschieben {
+    from { opacity: 0; transform: translateX(3vh); }
+}
+.badge {
+    font-size: 1.3vh; font-weight: 800; padding: .15vh .8vh;
+    border-radius: .4vh; background: #3a76d0; color: #fff;
+    flex: none; letter-spacing: .04em;
+}
+.badge.fl { background: #b13ad0; }
+.badge.pen { background: #d08a2f; }
+.badge.aus { background: #d02f2f; }
+.badge.start { background: #2fb457; }
+.badge.ende { background: #555; }
+.feed .zeit {
+    margin-left: auto; color: var(--overlay-muted);
+    font-family: var(--overlay-mono); font-size: 1.5vh;
+}
+
+/* ── Movers-Chips ─────────────────────────────────────────── */
+.chips { display: flex; flex-wrap: wrap; gap: .8vh; }
+.chip-rauf  { background: #1f7a3d; color: #fff; }
+.chip-runter { background: #8a1f1f; color: #fff; }
+.chip-rauf, .chip-runter {
+    font-size: 1.5vh; font-weight: 700; padding: .3vh 1.2vh; border-radius: 2vh;
+}
+
+/* ── Listen (FL / Boxen) ──────────────────────────────────── */
+.liste .zeile {
+    display: flex; align-items: baseline; gap: 1vh;
+    padding: .7vh 0; border-top: 1px solid rgba(255,255,255,.07);
+    font-size: 1.75vh; font-variant-numeric: tabular-nums;
+}
+.liste .zeile:first-child { border-top: 0; }
+.liste .wert {
+    font-family: 'Orbitron', 'Bahnschrift SemiBold Condensed', 'Bahnschrift', sans-serif;
+    font-weight: 700; font-size: 1.9vh; color: var(--gold);
+}
+.liste .wert.normal { color: var(--overlay-text); font-weight: 600; }
+.reifen {
+    font-size: 1.4vh; font-weight: 700; padding: .1vh .9vh; border-radius: 2vh;
+    background: #555; color: #0c0e14;
+}
+.reifen.soft   { background: var(--overlay-tyre-soft); }
+.reifen.medium { background: var(--overlay-tyre-medium); }
+.reifen.hard   { background: var(--overlay-tyre-hard); }
+.reifen.inter  { background: var(--overlay-tyre-inter); color: #fff; }
+.reifen.wet    { background: var(--overlay-tyre-wet); color: #fff; }
+
+/* ── Wetter ───────────────────────────────────────────────── */
+.wetter-jetzt { font-size: 1.75vh; }
+.wetter-jetzt .regen { color: var(--gold); font-weight: 700; }
+.vorhersage { display: flex; flex-wrap: wrap; gap: .6vh 1.8vh; margin-top: .8vh; }
+.vorhersage span { font-size: 1.5vh; color: var(--overlay-muted); font-variant-numeric: tabular-nums; }
+.vorhersage span.regen { color: var(--gold); font-weight: 700; }
+</style>
+</head>
+<body class="board">
+
+<div class="kopf">
+  <span class="mark">ERC</span>
+  <span class="session" id="c-session">Warte auf Telemetrie…</span>
+  <span class="uhr" id="c-uhr">–</span>
+  <span class="cond" id="c-cond"></span>
+  <span class="spacer"></span>
+  <span class="flagbanner" id="c-flagbanner"></span>
+</div>
+
+<div class="raster">
+  <div class="box" id="b-duelle">
+    <h2>Duelle <span class="zahl" id="c-duelle-zahl"></span></h2>
+    <div id="c-duelle"><div class="leer">keine Duelle gerade</div></div>
+  </div>
+
+  <div class="box" id="b-feed">
+    <h2>Race Control</h2>
+    <ul class="feed" id="c-feed"><li class="leer">noch keine Ereignisse</li></ul>
+  </div>
+
+  <div class="stack">
+    <div class="box" id="b-fl" style="margin-bottom: 2.2vh">
+      <h2>Schnellste Runden</h2>
+      <div class="liste" id="c-fl"><div class="leer">noch keine Runden</div></div>
+    </div>
+    <div class="box" id="b-boxen" style="margin-bottom: 2.2vh">
+      <h2>Boxen &amp; Ärger</h2>
+      <div class="liste" id="c-boxen"><div class="leer">alles ruhig</div></div>
+    </div>
+    <div class="box" id="b-wetter" style="margin-bottom: 2.2vh">
+      <h2>Wetter</h2>
+      <div class="wetter-jetzt" id="c-wetter-jetzt">–</div>
+      <div class="vorhersage" id="c-vorhersage"></div>
+    </div>
+    <div class="box" id="b-movers">
+      <h2>Positionen vs Start</h2>
+      <div class="chips" id="c-movers"><span class="leer">keine Deltas</span></div>
+    </div>
+  </div>
+</div>
+
+<noscript>JavaScript required for the live overlay.</noscript>
+
+<script src="overlay.js"></script>
+<script>
+(function () {
+  'use strict';
+  var fmt = window.overlayFormat;
+  var $ = function (id) { return document.getElementById(id); };
+
+  var params = new URLSearchParams(location.search);
+  if (params.get('spalte') === '1') document.body.classList.replace('board', 'spalte');
+
+  var demo = params.get('demo') === '1';
+
+  function reifenText(c) { return String(c).replace(/^F1C/, 'C').replace(/^F1/, ''); }
+  function reifenKlasse(c) {
+    if (c === 'F1C3' || c === 'F1C4' || c === 'F1C5') return 'soft';
+    if (c === 'F1C2') return 'medium';
+    if (c === 'F1C1') return 'hard';
+    if (c === 'F1I') return 'inter';
+    if (c === 'F1W') return 'wet';
+    return '';
+  }
+  function rausZeile(r) {
+    return r.resultStatus === 'Retired' || r.resultStatus === 'DidNotFinish';
+  }
+  function setze(liste, id, leerText) {
+    var box = $(id);
+    if (!liste.length) {
+      box.innerHTML = '<div class="leer">' + leerText + '</div>';
+      return;
+    }
+    box.textContent = '';
+    liste.forEach(function (el) { box.appendChild(el); });
+  }
+  function uhr(sec) {
+    sec = Math.max(sec, 0);
+    return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0');
+  }
+  function zeitstempel(utc) {
+    if (!utc) return '';
+    try {
+      return new Date(utc).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+    } catch (e) { return ''; }
+  }
+
+  // ── Race-Control-Feed (onEvent, newest on top, max 8) ────────
+  var BADGE = {
+    'fastest-lap': ['FL', 'fl'],
+    'personal-best': ['PB', ''],
+    'retirement': ['AUS', 'aus'],
+    'penalty': ['STRAFE', 'pen'],
+    'session-started': ['START', 'start'],
+    'session-ended': ['ENDE', 'ende']
+  };
+  function feedHinzu(ev) {
+    var feed = $('c-feed');
+    var leer = feed.querySelector('.leer');
+    if (leer) leer.remove();
+    var li = document.createElement('li');
+    var badgeInfo = BADGE[ev.type] || [(ev.type || 'info').slice(0, 6).toUpperCase(), ''];
+    var b = document.createElement('span');
+    b.className = 'badge ' + badgeInfo[1];
+    b.textContent = badgeInfo[0];
+    var t = document.createElement('span');
+    t.textContent = ev.text || '';
+    var z = document.createElement('span');
+    z.className = 'zeit';
+    z.textContent = zeitstempel(ev.utc);
+    li.appendChild(b); li.appendChild(t); li.appendChild(z);
+    feed.insertBefore(li, feed.firstChild);
+    while (feed.children.length > 8) feed.removeChild(feed.lastChild);
+  }
+
+  // ── Kopf ─────────────────────────────────────────────────────
+  var leaderLap = 1;
+  var duellEls = {};   // Key: carIndex-Paar -> Zeilen-Element (wiederverwendet)
+  function renderKopf(s) {
+    if (!s) return;
+    $('c-session').textContent = s.sessionType + ' · ' + s.track;
+    $('c-uhr').textContent = s.totalLaps > 0
+      ? 'LAP ' + leaderLap + '/' + s.totalLaps
+      : uhr(s.sessionTimeLeft);
+    var cond = s.weather + ' · ' + s.trackTemperature + '°T / ' + s.airTemperature + '°A';
+    $('c-cond').textContent = cond;
+  }
+
+  // ── Flaggen-Banner ───────────────────────────────────────────
+  function renderFlaggen(s) {
+    var banner = $('c-flagbanner');
+    var zonen = (s && s.marshalZones) || [];
+    var gelb = [], blau = [], gruen = [];
+    zonen.forEach(function (zone, i) {
+      if (zone.flag === 3) gelb.push(i + 1);
+      else if (zone.flag === 2) blau.push(i + 1);
+      else if (zone.flag === 1) gruen.push(i + 1);
+    });
+    if (gelb.length) {
+      banner.className = 'flagbanner gelb';
+      banner.textContent = 'Gelbe Flagge · Zone ' + gelb.join(', ');
+    } else if (blau.length) {
+      banner.className = 'flagbanner blau';
+      banner.textContent = 'Blaue Flagge · Zone ' + blau.join(', ');
+    } else if (gruen.length) {
+      banner.className = 'flagbanner gruen';
+      banner.textContent = 'Grün · freie Fahrt';
+    } else {
+      banner.className = 'flagbanner';
+      banner.textContent = '';
+    }
+  }
+
+  function onState(msg) {
+    var s = msg.session;
+    var reihen = (msg.standings || []).filter(function (r) { return !rausZeile(r); });
+    leaderLap = reihen.length ? reihen[0].currentLapNum : 1;
+    renderKopf(s);
+    renderFlaggen(s);
+
+    // ── Duelle: Lücken < 1 s; unter 0,3 s pulsiert der Abstand ─
+    // WICHTIG: Zeilen wiederverwenden statt neu bauen — jedes neu angelegte
+    // Element startet Puls-/Reinschieb-Animation neu und lässt alles blinken.
+    var paare = [];
+    for (var i = 1; i < reihen.length; i++) {
+      var back = reihen[i], front = reihen[i - 1];
+      if (back.pitStatus === 'None' && front.pitStatus === 'None' &&
+          back.gapToCarInFrontMs > 0 && back.gapToCarInFrontMs < 1000) {
+        paare.push({ key: front.carIndex + ':' + back.carIndex, front: front, back: back });
+      }
+    }
+    var alte = duellEls;
+    duellEls = {};
+    var box = $('c-duelle');
+    var leer = box.querySelector('.leer');
+    if (leer && paare.length) leer.remove();
+    paare.forEach(function (p) {
+      var el = alte[p.key];
+      if (!el) {
+        el = document.createElement('div');
+        el.className = 'duell';
+        var pos = document.createElement('span');
+        pos.className = 'pos';
+        var namen = document.createElement('span');
+        var f1 = document.createElement('span');
+        f1.className = 'front';
+        var gegen = document.createElement('span');
+        gegen.textContent = ' vs ';
+        var f2 = document.createElement('span');
+        f2.className = 'front';
+        namen.appendChild(f1); namen.appendChild(gegen); namen.appendChild(f2);
+        var gap = document.createElement('span');
+        gap.className = 'gap';
+        el.appendChild(pos); el.appendChild(namen); el.appendChild(gap);
+        el._pos = pos; el._f1 = f1; el._f2 = f2; el._gap = gap;
+        box.appendChild(el); // neue Zeile: einmal reinschieben ist gewollt
+      }
+      var istHeiss = p.back.gapToCarInFrontMs < 300;
+      if (el.classList.contains('heiss') !== istHeiss) {
+        el.classList.toggle('heiss', istHeiss); // nur bei Änderung — kein Blinken
+      }
+      el._pos.textContent = 'P' + p.front.position + '/' + p.back.position;
+      el._f1.textContent = p.front.name;
+      el._f2.textContent = p.back.name;
+      el._gap.textContent = (p.back.gapToCarInFrontMs / 1000).toFixed(3) + 's';
+      duellEls[p.key] = el;
+    });
+    // Reihenfolge OHNE DOM-Verschiebung: CSS order am Flex-Container.
+    // appendChild versetzt das Element ins DOM und startet die Animation neu.
+    paare.forEach(function (p, idx) { duellEls[p.key].style.order = idx; });
+    Object.keys(alte).forEach(function (k) { if (!duellEls[k]) alte[k].remove(); });
+    if (!paare.length && !leer) {
+      var platzhalter = document.createElement('div');
+      platzhalter.className = 'leer';
+      platzhalter.textContent = 'keine Duelle gerade';
+      box.appendChild(platzhalter);
+    }
+    $('c-duelle-zahl').textContent = paare.length ? paare.length + ' aktiv' : '';
+
+    // ── Schnellste Runden: Top 3 ────────────────────────────────
+    var schnellste = reihen.filter(function (r) { return r.bestLapTimeMs > 0; })
+      .sort(function (a, b) { return a.bestLapTimeMs - b.bestLapTimeMs; })
+      .slice(0, 3);
+    var flZeilen = schnellste.map(function (r, idx) {
+      var el = document.createElement('div');
+      el.className = 'zeile';
+      var w = document.createElement('span');
+      w.className = 'wert' + (idx === 0 ? '' : ' normal');
+      w.textContent = fmt.lapTime(r.bestLapTimeMs);
+      var n = document.createElement('span');
+      n.textContent = r.name;
+      el.appendChild(w); el.appendChild(n);
+      return el;
+    });
+    setze(flZeilen, 'c-fl', 'noch keine Runden');
+
+    // ── Boxen & Ärger ───────────────────────────────────────────
+    var aergernisse = [];
+    reihen.forEach(function (r) {
+      if (r.pitStatus === 'Pitting' || r.pitStatus === 'InPit') {
+        var pit = document.createElement('div');
+        pit.className = 'zeile';
+        var rw = document.createElement('span');
+        rw.className = 'reifen ' + reifenKlasse(r.tyreCompound);
+        rw.textContent = reifenText(r.tyreCompound);
+        var tx = document.createElement('span');
+        tx.textContent = 'P' + r.position + ' ' + r.name +
+          ' · Stopp ' + (r.pitStops + 1) + ' · Alter ' + r.tyreAgeLaps;
+        pit.appendChild(rw); pit.appendChild(tx);
+        aergernisse.push(pit);
+      }
+    });
+    (msg.standings || []).forEach(function (r) {
+      if (r.penalties > 0) {
+        var pen = document.createElement('div');
+        pen.className = 'zeile';
+        pen.innerHTML = '<span class="badge pen">+' + r.penalties + 's</span> ' + r.name;
+        aergernisse.push(pen);
+      }
+      if (rausZeile(r)) {
+        var aus = document.createElement('div');
+        aus.className = 'zeile';
+        aus.innerHTML = '<span class="badge aus">AUS</span> ' + r.name + ' (war P' + r.position + ')';
+        aergernisse.push(aus);
+      }
+    });
+    setze(aergernisse, 'c-boxen', 'alles ruhig');
+
+    // ── Movers ──────────────────────────────────────────────────
+    var mover = [];
+    reihen.forEach(function (r) {
+      if (r.gridPosition === undefined || r.gridPosition >= 255) return;
+      var delta = r.gridPosition - r.position;
+      if (!delta) return;
+      var chip = document.createElement('span');
+      chip.className = (delta > 0 ? 'chip-rauf' : 'chip-runter');
+      chip.textContent = (delta > 0 ? '+' : '') + delta + ' ' + r.name + ' P' + r.position;
+      mover.push(chip);
+    });
+    setze(mover, 'c-movers', 'keine Deltas');
+
+    renderWetter(s);
+  }
+
+  // ── Wetter ───────────────────────────────────────────────────
+  function renderWetter(s) {
+    if (!s) return;
+    var regen = (s.forecast || []).find(function (f) { return f.rainPercent > 0; });
+    $('c-wetter-jetzt').innerHTML = s.weather + ' · ' + s.trackTemperature + '°T / ' +
+      s.airTemperature + '°A' +
+      (regen ? ' · <span class="regen">Regen ' + regen.rainPercent + '% in ~' +
+        regen.timeOffsetMinutes + 'm</span>' : '');
+    var liste = $('c-vorhersage');
+    liste.innerHTML = '';
+    (s.forecast || []).forEach(function (f) {
+      var span = document.createElement('span');
+      if (f.rainPercent >= 50) span.className = 'regen';
+      span.textContent = '+' + f.timeOffsetMinutes + 'm ' + f.weather + ' ' + f.rainPercent + '%';
+      liste.appendChild(span);
+    });
+  }
+
+  // ── Demo-Modus: Design-Preview ohne laufendes Rennen ─────────
+  function demoDaten() {
+    document.body.classList.add('overlay-connected');
+    var namen = ['LeutnantKW', 'Erdi', 'Vettel_Fan', 'Kerbstrecke-Kai',
+                 'ApexHunter', 'GripLord', 'ShiftUp', 'Boxenstop'];
+    var gaps = [0, 280, 940, 120, 4200, 610, 3900, 210];
+    var reihen = namen.map(function (name, i) {
+      return {
+        position: i + 1, name: name, raceNumber: 7 + i * 3,
+        currentLapNum: 12,
+        bestLapTimeMs: 91234 + i * 812,
+        gapToCarInFrontMs: gaps[i],
+        pitStatus: 'None', penalties: i === 3 ? 5 : 0,
+        resultStatus: 'Active', tyreCompound: 'F1C3',
+        tyreAgeLaps: [8, 12, 3, 19, 5, 22, 14, 9][i],
+        gridPosition: [1, 3, 2, 4, 6, 5, 8, 7][i]
+      };
+    });
+    onState({
+      session: {
+        sessionType: 'Race', track: 'Spa-Francorchamps', totalLaps: 44,
+        weather: 'LightRain', trackTemperature: 27, airTemperature: 19,
+        sessionTimeLeft: 0, gameMode: 'OnlineCustom',
+        marshalZones: [{ zoneStart: 0, flag: 3 }, { zoneStart: 0.4, flag: 0 }],
+        forecast: [
+          { timeOffsetMinutes: 15, weather: 'LightRain', rainPercent: 65 },
+          { timeOffsetMinutes: 30, weather: 'Cloudy', rainPercent: 20 }
+        ]
+      },
+      standings: reihen
+    });
+    feedHinzu({ type: 'fastest-lap', text: 'Schnellste Runde: Erdi — 1:51.234', utc: new Date().toISOString() });
+    feedHinzu({ type: 'penalty', text: '5 s Zeitstrafe: Kerbstrecke-Kai', utc: new Date().toISOString() });
+    feedHinzu({ type: 'retirement', text: 'Ausfall: Boxenstop (Technik)', utc: new Date().toISOString() });
+  }
+
+  if (!demo) {
+    window.connectOverlay({
+      onState: onState,
+      onEvent: feedHinzu
+    });
+  }
+  if (demo) demoDaten();
+})();
+</script>
+</body>
+</html>

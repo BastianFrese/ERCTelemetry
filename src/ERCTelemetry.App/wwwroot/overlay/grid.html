@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>ERCTelemetry — Startaufstellung</title>
+<link rel="stylesheet" href="overlay.css">
+<style>
+  /* Startaufstellung im F1-TV-Look: zwei Spalten, Team-Farbbalken.
+     Entwurfsgröße 1680×1050, skaliert per overlayFit auf die Quelle. */
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: transparent; overflow: hidden; }
+  body { font-family: 'Segoe UI', 'Bahnschrift', sans-serif; color: #f2f2f2; }
+  .buehne { width: 1680px; height: 1050px; padding: 26px 34px; box-sizing: border-box; }
+  .kopf { display: flex; align-items: baseline; gap: 18px; margin-bottom: 8px; }
+  .logo {
+    background: #e10600; color: #fff; font-weight: 900; font-style: italic;
+    padding: 4px 14px; letter-spacing: .08em; font-size: 20px;
+    clip-path: polygon(0 0, 100% 0, 92% 100%, 0 100%);
+  }
+  .titel { font-size: 34px; font-weight: 900; font-style: italic; letter-spacing: .03em; }
+  .ort { color: #9a9aa5; font-size: 18px; margin-left: auto; font-variant-numeric: tabular-nums; }
+  .raster { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 26px; margin-top: 18px; }
+  .zeile {
+    display: flex; align-items: center; gap: 12px; height: 52px;
+    background: linear-gradient(90deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
+    border: 1px solid rgba(255,255,255,.08); overflow: hidden;
+  }
+  .zeile .pos {
+    width: 58px; height: 100%; display: flex; align-items: center; justify-content: center;
+    font-weight: 900; font-size: 22px; background: rgba(255,255,255,.08);
+    font-style: italic; font-variant-numeric: tabular-nums;
+  }
+  .zeile:first-child .pos, .zeile.p1 .pos { background: #e10600; }
+  .zeile.p2 .pos { background: #b8b8c0; color: #111; }
+  .zeile.p3 .pos { background: #b6713d; }
+  .zeile .nr { font-weight: 800; color: #ffd500; width: 34px; text-align: right; font-variant-numeric: tabular-nums; }
+  .zeile .balken { width: 5px; height: 70%; border-radius: 2px; flex: none; }
+  .zeile .name {
+    font-size: 21px; font-weight: 700; letter-spacing: .02em;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;
+  }
+  .zeile .team { color: #9a9aa5; font-size: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; padding-right: 14px; flex: none; }
+  .zeile.spieler { border-color: rgba(225,6,0,.7); background: rgba(225,6,0,.10); }
+  .zeile.ausfall { opacity: .4; }
+  .hinweis { color: #9a9aa5; font-size: 14px; margin-top: 16px; }
+  .logo-klein { color: #6d6d78; font-size: 12px; margin-top: 10px; letter-spacing: .06em; text-transform: uppercase; }
+</style>
+</head>
+<body>
+  <div class="buehne" id="buehne">
+    <div class="kopf">
+      <span class="logo">ERC</span>
+      <span class="titel">STARTING GRID</span>
+      <span class="ort" id="kopf-rechts">warte auf Telemetrie…</span>
+    </div>
+    <div class="raster" id="raster"></div>
+    <div class="hinweis" id="hinweis"></div>
+    <div class="logo-klein">Erdi's Racing Community · erdi-erc.de</div>
+  </div>
+  <script src="overlay.js"></script>
+  <script src="erc-names.js"></script>
+  <script>
+    (function () {
+      'use strict';
+      var fmt = window.overlayFormat;
+      var raster = document.getElementById('raster');
+      var kopf = document.getElementById('kopf-rechts');
+      var hinweis = document.getElementById('hinweis');
+      var els = {}; // key: carIndex -> Zeilen-Element (Wiederverwendung, kein Strobe)
+      var buehne = document.getElementById('buehne');
+      // Eigener Fit in BEIDEN Richtungen (overlayFit skaliert nur hoch)
+      window.buehnenFit = window.buehnenFit || function (el, w, h) {
+        function anwenden() {
+          var u = Math.min(window.innerWidth / w, window.innerHeight / h);
+          el.style.transformOrigin = 'top left';
+          el.style.transform = 'scale(' + u + ')';
+        }
+        window.addEventListener('resize', anwenden);
+        anwenden();
+      };
+      window.buehnenFit(buehne, 1680, 1050);
+
+      // Team-Farben (F1-Stil, ERC-Liga)
+      var TEAMFARBEN = {
+        'mclaren': '#ff8000', 'red bull racing': '#3671c6', 'ferrari': '#e8002d',
+        'mercedes': '#27f4d2', 'aston martin': '#229971', 'alpine': '#ff87bc',
+        'williams': '#64c4ff', 'racing bulls': '#6692ff', 'haas': '#b6babd',
+        'sauber': '#52e252', 'audi': '#00e701', 'cadillac': '#00a3e0',
+      };
+      function teamFarbe(team) { return TEAMFARBEN[String(team || '').toLowerCase()] || '#8a8a95'; }
+
+      window.ercNames.lade(function () {
+        // erst Daten, dann live loslegen — zeichnen passiert eh bei jeder state-Nachricht
+      });
+
+      function zeichne(msg) {
+        var s = msg.session || {};
+        kopf.textContent = (s.track || '') + (s.totalLaps ? ' · ' + s.totalLaps + ' Runden' : '');
+        var reihen = (msg.standings || []).slice();
+        if (!reihen.length) { hinweis.textContent = 'warte auf Telemetrie…'; return; }
+        // Startaufstellung: nach gridPosition sortieren (255 = unbekannt -> hinten)
+        var mitGrid = reihen.filter(function (r) { return r.gridPosition !== undefined && r.gridPosition < 250; });
+        if (mitGrid.length >= reihen.length * 0.6) {
+          reihen.sort(function (a, b) { return a.gridPosition - b.gridPosition; });
+        } else {
+          reihen.sort(function (a, b) { return a.position - b.position; });
+        }
+
+        var erwartete = {};
+        reihen.forEach(function (r, i) {
+          var profil = window.ercNames.zuFahrer(r.name);
+          var key = 'c' + r.carIndex;
+          erwartete[key] = true;
+          var el = els[key];
+          if (!el) { // nur echte neue Zeilen bauen (Animationen nicht neu starten!)
+            el = document.createElement('div');
+            el.className = 'zeile';
+            el.innerHTML =
+              '<div class="pos"></div><div class="nr"></div><div class="balken"></div>' +
+              '<div class="name"></div><div class="team"></div>';
+            raster.appendChild(el);
+            els[key] = el;
+          }
+          var info = {
+            pos: r.gridPosition < 250 ? r.gridPosition : r.position,
+            nr: r.raceNumber || '',
+            name: (profil && profil.name) || r.name,
+            team: (profil && profil.team) || '',
+            farbe: teamFarbe(profil && profil.team),
+            spieler: !!r.isPlayer,
+            ausfall: r.resultStatus === 'Retired' || r.resultStatus === 'DidNotFinish',
+          };
+          if (el._info !== info) {
+            el._info = info;
+            el.querySelector('.pos').textContent = 'P' + info.pos;
+            el.querySelector('.nr').textContent = info.nr;
+            el.querySelector('.name').textContent = info.name;
+            el.querySelector('.team').textContent = info.team;
+            var b = el.querySelector('.balken');
+            b.style.background = info.farbe;
+            var p = el.querySelector('.pos');
+            p.className = 'pos' + (info.pos === 1 ? ' p1' : info.pos === 2 ? ' p2' : info.pos === 3 ? ' p3' : '');
+            el.classList.toggle('spieler', info.spieler);
+            el.classList.toggle('ausfall', info.ausfall);
+          }
+          el.style.order = i; // Reihenfolge ohne DOM-Verschiebung
+        });
+        Object.keys(els).forEach(function (k) {
+          if (!erwartete[k]) { els[k].remove(); delete els[k]; }
+        });
+        hinweis.textContent = mitGrid.length >= reihen.length * 0.6
+          ? 'Startaufstellung' : (s.sessionType === 'Race' ? 'fahrende Reihenfolge' : 'aktuelle Reihenfolge');
+      }
+
+      window.connectOverlay({ onState: zeichne });
+    })();
+  </script>
+  <noscript>JavaScript required for the live overlay.</noscript>
+</body>
+</html>

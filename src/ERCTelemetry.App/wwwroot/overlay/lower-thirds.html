@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>ERCTelemetry — Lower Thirds</title>
+<link rel="stylesheet" href="overlay.css">
+<style>
+  /* Lower Thirds: transparente Vollfläche, Banner unten links wie im F1-TV.
+     AUTO-Ereignisse (Angriff auf P1, Boxenstopp, FL, Strafe, Ausfall) + MANUELL
+     per URL: ?titel=ERDI&unter=greift P1 an&dauer=10  (dauer in Sekunden)
+     In Streamlabs: Browser-Quelle 1920×1080, für manuelle Anzeige einfach die
+     URL im Quellen-Dialog ändern + OK (die Quelle lädt neu und zeigt das Banner). */
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: transparent; overflow: hidden; width: 100%; height: 100%; }
+  body { font-family: 'Segoe UI', 'Bahnschrift', sans-serif; color: #f2f2f2; }
+  .banner {
+    position: absolute; left: 46px; bottom: 42px;
+    display: flex; align-items: stretch; max-width: 720px;
+    opacity: 0; transform: translateY(26px);
+    transition: opacity .45s ease, transform .45s cubic-bezier(.2, .9, .25, 1.2);
+    pointer-events: none;
+  }
+  .banner.an { opacity: 1; transform: translateY(0); }
+  .banner .latte { width: 7px; background: #e10600; flex: none; }
+  .banner .koerper {
+    background: linear-gradient(90deg, rgba(12,12,16,.96), rgba(12,12,16,.86));
+    border: 1px solid rgba(255,255,255,.1); border-left: none;
+    padding: 12px 22px 12px 16px; min-width: 260px;
+  }
+  .banner .art {
+    font-size: 11px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase;
+    color: #ffd500; margin-bottom: 2px;
+  }
+  .banner .titel {
+    font-size: 26px; font-weight: 900; font-style: italic; letter-spacing: .02em;
+    line-height: 1.15; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .banner .unter { font-size: 15px; color: #b9b9c2; margin-top: 2px; }
+  .banner.fl .latte { background: #b13ad0; }
+  .banner.strafe .latte { background: #ffb300; }
+  .banner.ausfall .latte { background: #555; }
+</style>
+</head>
+<body>
+  <div class="banner" id="banner">
+    <div class="latte"></div>
+    <div class="koerper">
+      <div class="art" id="art"></div>
+      <div class="titel" id="titel"></div>
+      <div class="unter" id="unter"></div>
+    </div>
+  </div>
+  <script src="overlay.js"></script>
+  <script src="erc-names.js"></script>
+  <script>
+    (function () {
+      'use strict';
+      var fmt = window.overlayFormat;
+      var params = new URLSearchParams(location.search);
+      var banner = document.getElementById('banner');
+      var artEl = document.getElementById('art');
+      var titelEl = document.getElementById('titel');
+      var unterEl = document.getElementById('unter');
+
+      var DAUER_MS = (parseInt(params.get('dauer'), 10) || 6) * 1000;
+      var AUTO = params.get('auto') !== '0';
+      var zeitImSpiel = {}; // carIndex -> seit wann Pitting (kein Doppel-Feuern)
+
+      var offen = false, offenSeit = 0, warteschlange = [];
+      function zeige(art, titel, unter, klasse) {
+        warteschlange.push({ art: art, titel: titel, unter: unter || '', klasse: klasse || '' });
+        arbeiten();
+      }
+      function arbeiten() {
+        if (offen || !warteschlange.length) return;
+        var n = warteschlange.shift();
+        offen = true;
+        offenSeit = Date.now();
+        artEl.textContent = n.art;
+        titelEl.textContent = n.titel;
+        unterEl.textContent = n.unter;
+        banner.className = 'banner an ' + n.klasse;
+        setTimeout(function () {
+          banner.classList.remove('an');
+          setTimeout(function () { offen = false; arbeiten(); }, 500);
+        }, DAUER_MS);
+      }
+
+      // ── Manuell: ?titel=...&unter=... sofort beim Laden zeigen ──
+      var manuell = params.get('titel');
+      if (manuell) {
+        zeige(params.get('art') || 'ERC', manuell, params.get('unter') || '', params.get('stil') || '');
+      }
+
+      if (!AUTO) return; // reine Manuell-Quelle
+
+      window.ercNames.lade(function () { /* Profile für schöne Namen */ });
+
+      function nameVon(row) {
+        var profil = window.ercNames.zuFahrer(row.name);
+        return (profil && profil.name) || row.name;
+      }
+
+      // ── Auto: Ereignisse ──
+      function behandleEvent(ev) {
+        if (ev.type === 'fastest-lap') zeige('Schnellste Runde', ev.text.replace(/^Schnellste Runde:\s*/i, ''), '', 'fl');
+        else if (ev.type === 'penalty') zeige('Strafe', ev.text.replace(/^\d+\s*s\s*Zeitstrafe:\s*/i, ''), '', 'strafe');
+        else if (ev.type === 'retirement') zeige('Ausfall', ev.text.replace(/^Ausfall:\s*/i, ''), '', 'ausfall');
+      }
+
+      // ── Auto: Angriff auf den Führer (P2 < 0.35 s für 4 s) ──
+      var greiftSeit = 0, letzterAngreifer = 0;
+      function pruefeAngriff(msg) {
+        var reihen = (msg.standings || []).filter(function (r) { return r.resultStatus === 'Active'; });
+        var fuehrer = reihen.find(function (r) { return r.position === 1; });
+        var jaeger = reihen.find(function (r) { return r.position === 2; });
+        if (!fuehrer || !jaeger) { greiftSeit = 0; return; }
+        var nah = jaeger.gapToCarInFrontMs > 0 && jaeger.gapToCarInFrontMs < 350 &&
+                  jaeger.pitStatus === 'None' && fuehrer.pitStatus === 'None';
+        if (!nah) { greiftSeit = 0; return; }
+        if (!greiftSeit) { greiftSeit = Date.now(); return; }
+        if (Date.now() - greiftSeit > 4000 && Date.now() - letzterAngreifer > 45000) {
+          letzterAngreifer = Date.now();
+          greiftSeit = 0;
+          var gap = (jaeger.gapToCarInFrontMs / 1000).toFixed(1);
+          zeige('Kampf um die Führung', nameVon(jaeger) + ' greift P1 an', 'Rückstand: ' + gap + ' s');
+        }
+      }
+
+      // ── Auto: Boxenstop-Erkennung (Pitting-Beginn) ──
+      function pruefeBoxen(msg) {
+        (msg.standings || []).forEach(function (r) {
+          var k = r.carIndex;
+          if (r.pitStatus === 'Pitting' && !zeitImSpiel[k]) {
+            zeitImSpiel[k] = Date.now();
+            zeige('Boxengasse', nameVon(r) + ' kommt rein', r.pitStops > 0 ? 'Stopp Nr. ' + (r.pitStops + 1) : '');
+          } else if (r.pitStatus !== 'Pitting' && zeitImSpiel[k]) {
+            delete zeitImSpiel[k];
+          }
+        });
+      }
+
+      window.connectOverlay({
+        onState: function (msg) { pruefeAngriff(msg); pruefeBoxen(msg); },
+        onEvent: behandleEvent,
+      });
+    })();
+  </script>
+  <noscript>JavaScript required for the live overlay.</noscript>
+</body>
+</html>
