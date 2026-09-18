@@ -100,9 +100,9 @@
             if (row.isPlayer) tr.className = 'is-player';
             tr.innerHTML =
               '<td class="pos">' + row.position + '</td>' +
-              '<td class="name">' + row.name + '</td>' +
+              '<td class="name">' + fmt.esc(row.name) + '</td>' +
               '<td><span class="tyre ' + tyreClass(row.tyreCompound || '') + '">' +
-                String(row.tyreCompound || '?').replace(/^F1C/, 'C').replace(/^F1/, '') + '</span></td>' +
+                fmt.esc(String(row.tyreCompound || '?').replace(/^F1C/, 'C').replace(/^F1/, '')) + '</span></td>' +
               '<td><div class="heat heat-wear"><div class="fill" style="width:' + fmt.pct(t.wearPercent) + '"></div></div></td>' +
               '<td><div class="heat heat-damage"><div class="fill" style="width:' + fmt.pct(t.damagePercent) + '"></div></div></td>';
             body.appendChild(tr);

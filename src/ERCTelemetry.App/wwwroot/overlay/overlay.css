@@ -314,3 +314,46 @@ body.scheme-de {
     color: var(--overlay-text);
     font-weight: 700;
 }
+/* ════════════════════════════════════════════════════════════════════════
+   ERC F1 Broadcast-Theme
+   Angepasst an das F1-Themepack (C:\Users\basti\f1-themepack):
+   Carbon-Schwarz, F1-Rot #e10600, Renn-Gelb #ffd500. Nur Tokens +
+   Widget-Chrome — der DOM- und Token-Vertrag (siehe README) bleibt unberührt,
+   body.scheme-de (schwarz-rot-gold) überschreibt die Akzente weiter.
+   ════════════════════════════════════════════════════════════════════════ */
+:root {
+    --overlay-widget-bg: rgba(11, 11, 16, 0.90);
+    --overlay-widget-border: rgba(255, 255, 255, 0.10);
+    --overlay-widget-radius: 6px;
+    --overlay-text: #f4f4f6;
+    --overlay-muted: #9aa3ae;
+    --overlay-accent: #e10600;
+    --overlay-track: rgba(154, 163, 174, 0.30);
+    --overlay-gold: #ffd500;   /* ERC Renn-Gelb — Leader, FL-Badge */
+}
+
+/* Carbon-Webung statt flacher Fläche — dieselbe Struktur wie die
+   Hintergrundbilder des Themepacks. */
+body .widget {
+    background:
+        repeating-linear-gradient(45deg,  rgba(255, 255, 255, .018) 0 2px, transparent 2px 7px),
+        repeating-linear-gradient(-45deg, rgba(255, 255, 255, .011) 0 2px, transparent 2px 7px),
+        linear-gradient(180deg, #101018 0%, #0b0b10 100%);
+}
+
+/* Titel kursiv-fett wie der F1-Schriftzug; der rote Akzentbalken wird zur
+   schrägen F1-Latte mit leichtem Glühen. */
+body .widget-title {
+    font-style: italic;
+    font-weight: 900;
+    letter-spacing: 0.10em;
+}
+body .widget-title::before {
+    transform: skewX(-12deg);
+    border-radius: 1px;
+    box-shadow: 0 0 8px rgba(225, 6, 0, .55);
+}
+
+/* Spitze in Renn-Gelb: Führender im Timing-Tower, schnellste Runde */
+.tower tr.leader td.pos { color: var(--overlay-gold); }
+.tower .fl { background: var(--overlay-gold); color: #15151b; }

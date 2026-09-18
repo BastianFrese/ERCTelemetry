@@ -9,6 +9,8 @@ namespace ERCTelemetry.ShareServer;
 /// token + user) or <c>"error"</c> (with a message). <see cref="Nonce"/> is a second
 /// random token issued to the app at start and required (X-Login-Nonce) on every status /
 /// delete call, so a third party that learns the state cannot poll the result away.
+/// <see cref="InstallId"/> binds the attempt to the installation that started it (S2): a
+/// status/delete call must present the SAME install id the start used.
 /// Immutable — transitions use <c>with</c>.</summary>
 public sealed record TwitchLoginAttempt(
     string State,
@@ -18,4 +20,5 @@ public sealed record TwitchLoginAttempt(
     string? Token = null,
     string? RefreshToken = null,
     TwitchUser? User = null,
-    string? Error = null);
+    string? Error = null,
+    string? InstallId = null);

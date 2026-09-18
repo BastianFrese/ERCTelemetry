@@ -43,6 +43,7 @@ public partial class MainWindow : Window
     private Task<UpdateService.DeltaResult>? _deltaTask; // background delta download
     private bool _deltaReady; // staging complete — the update applies on exit
     private bool _hotkeysRegistered; // OnSourceInitialized must stay idempotent
+    private bool _teardownStarted; // OnClosing deferral is one-shot
     private int _isSaving; // 1 while SaveAsync is in flight — blocks click re-entrancy
 
     /// <summary>F1-red #E10600 as a DWM COLORREF (0x00BBGGRR) for the window border.</summary>
@@ -152,6 +153,7 @@ public partial class MainWindow : Window
         _ = CheckUpdateLogAfterStartupAsync(); // show UPDATELOG.md after an update
         _ = CheckApplyResultAfterStartupAsync(); // surface a failed delta apply, then clean up
         _ = RefreshFirewallStatusAfterStartupAsync(); // Setup tab: rule present? offer to add it
+        _ = ErcDriverDataHost.RunAsync(); // keep erc-drivers.json fresh for the championship overlays
         SetupVersionText.Text = $"ERCTelemetry Version {AppVersion}"; // web-download version match
     }
 
@@ -201,10 +203,12 @@ public partial class MainWindow : Window
             return;
         }
 
-        _settingsService.Update(s => s with { LastSeenVersion = version });
-
         try
         {
+            // Inside the guarded region: a settings-write IO failure must land in the log,
+            // not fault the fire-and-forget task unobserved (LOW, 2026-09-16).
+            _settingsService.Update(s => s with { LastSeenVersion = version });
+
             var logPath = Path.Combine(AppContext.BaseDirectory, "UPDATELOG.md");
             if (!File.Exists(logPath))
             {
@@ -1347,6 +1351,22 @@ public partial class MainWindow : Window
             _update.StartDeltaUpdater(UpdateService.ApplyScriptPath());
         }
 
+        if (_teardownStarted)
+        {
+            // Second pass — Application.Shutdown() (below) closes this window again after
+            // the background teardown finished. Everything is down; let the window go.
+            base.OnClosing(e);
+            return;
+        }
+
+        // First pass: defer the real close so the serial service teardown runs off the
+        // UI thread. Each Dispose can wait up to seconds (Kestrel stop, channel drains,
+        // clip-encode kill, DB flush); done inline, closing froze the app briefly
+        // (MEDIUM, 2026-09-16). Window- and hwnd-affine teardown stays on the UI thread.
+        _teardownStarted = true;
+        e.Cancel = true;
+        Hide();
+
         var hwnd = new WindowInteropHelper(this).Handle;
         Win32Interop.UnregisterHotKey(hwnd, Win32Interop.OverlayHotKeyId);
         Win32Interop.UnregisterHotKey(hwnd, Win32Interop.RivalHotKeyId);
@@ -1359,13 +1379,52 @@ public partial class MainWindow : Window
         _inGameOverlay.Close();
         _dashboard.Dispose();
         _debug.Dispose();
-        _overlay.Dispose();
-        _voiceAlerts.Dispose(); // before _services.Dispose() — it reads the VoiceEvents channel
-        _twitchChat.Dispose(); // before _services.Dispose() — it reads the TwitchSnapshots channel
-        _discordLogin.Dispose(); // cancels the login poll loop
-        _ercPrompts.Dispose(); // before _services.Dispose() — it reads the ErcRaceEnded channel
-        _services.Dispose();
-        _tray.Dispose();
-        base.OnClosing(e);
+
+        _ = TeardownAndExitAsync();
+    }
+
+    /// <summary>Finishes the shutdown after <see cref="OnClosing"/> deferred it: the
+    /// service teardown (none of it touches the UI) runs on a background thread, then
+    /// the tray icon and the final Shutdown are marshalled back to the UI thread. Running
+    /// this chain inline kept the UI frozen for the whole multi-second teardown.</summary>
+    private async Task TeardownAndExitAsync()
+    {
+        try
+        {
+            await Task.Run(() =>
+            {
+                _overlay.Dispose();
+                _voiceAlerts.Dispose(); // before _services.Dispose() — it reads the VoiceEvents channel
+                _twitchChat.Dispose(); // before _services.Dispose() — it reads the TwitchSnapshots channel
+                _discordLogin.Dispose(); // cancels the login poll loop
+                _ercPrompts.Dispose(); // before _services.Dispose() — it reads the ErcRaceEnded channel
+                _services.Dispose();
+            });
+        }
+        catch (Exception ex)
+        {
+            // A partially torn-down service must not leave the process running headless —
+            // log and shut down regardless.
+            App.Log($"Shutdown teardown failed: {ex}");
+        }
+
+        await Dispatcher.InvokeAsync(() =>
+        {
+            try
+            {
+                _tray.Dispose();
+            }
+            catch (Exception ex)
+            {
+                // A tray dispose failure (NotifyIcon in a tray-less session / shell quirk)
+                // must not strand the hidden headless process holding the UDP port and the
+                // single-instance mutex — Shutdown still runs (MEDIUM, 2026-09-16).
+                App.Log($"Tray dispose failed: {ex.Message}");
+            }
+            finally
+            {
+                Application.Current.Shutdown();
+            }
+        });
     }
 }

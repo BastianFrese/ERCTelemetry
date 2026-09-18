@@ -108,7 +108,7 @@
             tr.innerHTML =
               '<td class="pos">' + row.position + '</td>' +
               '<td class="num">' + row.raceNumber + '</td>' +
-              '<td class="name">' + row.name + (row.pitStatus === 'Pitting' ? ' <span class="pit">PIT</span>' : '') + '</td>' +
+              '<td class="name">' + fmt.esc(row.name) + (row.pitStatus === 'Pitting' ? ' <span class="pit">PIT</span>' : '') + '</td>' +
               '<td class="lap">' + row.currentLapNum + '</td>' +
               '<td class="mono">' + fmt.lapTime(row.lastLapTimeMs) + '</td>' +
               '<td class="mono">' + fmt.lapTime(row.bestLapTimeMs) + '</td>' +
@@ -118,7 +118,7 @@
               '<td class="mono gap">' + fmt.gap(row.gapToLeaderMs) + '</td>' +
               '<td class="mono gap">' + interval(row.gapToCarInFrontMs) + '</td>' +
               '<td><span class="tyre ' + tyreClass(row.tyreCompound) + '">' +
-                row.tyreCompound.replace(/^F1C/, 'C').replace(/^F1/, '') + ' · ' + row.tyreAgeLaps + '</span></td>' +
+                fmt.esc(row.tyreCompound.replace(/^F1C/, 'C').replace(/^F1/, '')) + ' · ' + row.tyreAgeLaps + '</span></td>' +
               '<td class="pen">' + (row.penalties > 0 ? '+' + row.penalties : '') + '</td>';
             body.appendChild(tr);
           });

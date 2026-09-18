@@ -17,7 +17,7 @@ public sealed class ScreenCaptureService : IDisposable
     private readonly CancellationTokenSource _stop = new();
     private readonly object _gate = new();
     private readonly Task _loop;
-    private readonly HdrFrameSource _frames = new();
+    private readonly HdrFrameSource _frames;
     private readonly AudioLoopbackSource _audio;
     private RollingFrameStore? _store;
 
@@ -33,6 +33,9 @@ public sealed class ScreenCaptureService : IDisposable
     {
         _settings = settings;
         _audio = new AudioLoopbackSource(settings);
+        // The FPS throttle lives in the frame source now (it must run BEFORE the JPEG
+        // encode); hand it the same live settings source so a FPS change applies per frame.
+        _frames = new HdrFrameSource(() => _settings().Fps);
         _frames.FrameCaptured += OnFrameCaptured;
         _loop = Task.Run(() => ManageLoopAsync(_stop.Token));
     }
@@ -65,17 +68,24 @@ public sealed class ScreenCaptureService : IDisposable
             }
         }
 
-        RollingFrameStore? store;
-        AudioRingBuffer? ring;
-        lock (_gate)
-        {
-            store = _store;
-            ring = _audio.Ring;
-        }
-
         var fromUtc = metadata.Utc - TimeSpan.FromSeconds(settings.PreRollSeconds);
         var toUtc = metadata.Utc + TimeSpan.FromSeconds(settings.PostRollSeconds);
-        var frames = store?.TakeSince(fromUtc) ?? Array.Empty<(DateTimeOffset, byte[])>();
+
+        AudioRingBuffer? ring;
+        IReadOnlyList<(DateTimeOffset Utc, byte[] Jpeg)> frames;
+        lock (_gate)
+        {
+            ring = _audio.Ring;
+            // Halte das Gate über TakeSince hinweg: ManageLoopAsync gibt _store unter
+            // genau diesem Lock am Sessionende frei (Dispose + null) und ruft Clear() bei
+            // einem Capture-Neustart — wer hier nur die Referenz zieht und erst NACH dem
+            // Gate liest, rast mit dem Dispose um die Wette und verliert den Clip (TakeSince
+            // auf gelöschten Segmenten wirft bzw. liefert leer; HIGH, 2026-09-16). Der Read
+            // ist ein Disk-Scan des gepufferten Fensters, aber das ist ein seltener,
+            // begrenzter Preis gegenüber einem still verlorenen Clip. Audio ist nicht
+            // betroffen: Stop() behält den Ring-Buffer ausdrücklich.
+            frames = _store?.TakeSince(fromUtc) ?? Array.Empty<(DateTimeOffset, byte[])>();
+        }
         // TakeSince returns everything from fromUtc onward, which can extend past toUtc
         // when the save runs late — trim to the window so the clip is exactly preRoll+postRoll.
         // Sort by capture time: a 2-buffer capture can store out of capture order, and

@@ -310,9 +310,12 @@ public sealed class VoiceAlertService : IDisposable
     /// slow model can never stack concurrent requests.</summary>
     private async Task AnalyzeAndSpeakAsync(LiveAnalysisDigest digest, LiveAnalysisTriggerReason reason, CancellationToken ct)
     {
-        await _llmGate.WaitAsync(ct);
         try
         {
+            // WaitAsync INSIDE the try: on shutdown (pre-cancelled token) it throws OCE,
+            // which the catch below swallows — outside the try the fire-and-forget task
+            // would fault unobserved (MEDIUM, 2026-09-16).
+            await _llmGate.WaitAsync(ct);
             var text = _llm is { IsConfigured: true }
                 ? await _llm.LiveAnalyzeAsync(digest, reason, ct)
                 : await _template.AnalyzeAsync(digest, reason, ct);
@@ -320,6 +323,17 @@ public sealed class VoiceAlertService : IDisposable
             {
                 EnqueueSpeak(text);
             }
+        }
+        catch (OperationCanceledException)
+        {
+            // Shutdown — the alert is dropped silently.
+        }
+        catch (Exception ex)
+        {
+            // Fire-and-forget: ohne catch fault die Task unobserved, wenn die LLM/Schablone
+            // wirft (Netzfehler, TTS-Timeout) — die Ansage stirbt still und der Fehler landet
+            // nie im Log (MEDIUM, 2026-09-16).
+            App.Log($"Live-Analyse fehlgeschlagen: {ex.Message}");
         }
         finally
         {
@@ -331,9 +345,10 @@ public sealed class VoiceAlertService : IDisposable
     /// Fire-and-forget from the analysis loop; shares the LLM gate with the live analysis.</summary>
     private async Task RivalAndSpeakAsync(RivalDigest rivalDigest, CancellationToken ct)
     {
-        await _llmGate.WaitAsync(ct);
         try
         {
+            // WaitAsync INSIDE the try — pre-cancelled token OCE stays contained (MEDIUM, 2026-09-16).
+            await _llmGate.WaitAsync(ct);
             var text = _llm is { IsConfigured: true }
                 ? await _llm.RivalAnalyzeAsync(rivalDigest, ct)
                 : await _rivalTemplate.AnalyzeAsync(rivalDigest, ct);
@@ -341,6 +356,16 @@ public sealed class VoiceAlertService : IDisposable
             {
                 EnqueueSpeak(text);
             }
+        }
+        catch (OperationCanceledException)
+        {
+            // Shutdown — the alert is dropped silently.
+        }
+        catch (Exception ex)
+        {
+            // Fire-and-forget: ohne catch fault die Task unobserved (Netzfehler, LLM-Ausfall)
+            // und der Fehler bleibt unsichtbar (MEDIUM, 2026-09-16).
+            App.Log($"Rival-Analyse fehlgeschlagen: {ex.Message}");
         }
         finally
         {

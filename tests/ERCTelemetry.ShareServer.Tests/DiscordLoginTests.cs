@@ -28,6 +28,7 @@ public sealed class DiscordLoginTests : IClassFixture<DiscordLoginFixture>
     {
         var request = new HttpRequestMessage(HttpMethod.Post, "/discord/login/start");
         AddToken(request);
+        request.Headers.Add(ShareConstants.InstallIdHeader, _installId);
 
         var response = await _fixture.Client.SendAsync(request);
 
@@ -39,6 +40,10 @@ public sealed class DiscordLoginTests : IClassFixture<DiscordLoginFixture>
         var url = root.GetProperty("authorizeUrl").GetString();
         Assert.Equal(32, state?.Length); // Guid N
         Assert.Equal(32, nonce?.Length); // Guid N
+        // S2: the start binds the attempt to the install and onboards it with a fresh
+        // possession secret the app persists.
+        Assert.Equal(_installId, root.GetProperty("installId").GetString());
+        Assert.Equal(64, root.GetProperty("installSecret").GetString()?.Length); // 32-byte hex
         Assert.StartsWith("https://discord.com/api/v10/oauth2/authorize?", url);
         Assert.Contains("client_id=discord-client-123", url);
         Assert.Contains("redirect_uri=https%3A%2F%2Ftelemetrie.erdi-erc.de%2Fdiscord%2Fcallback", url);
@@ -186,6 +191,7 @@ public sealed class DiscordLoginTests : IClassFixture<DiscordLoginFixture>
 
         var request = new HttpRequestMessage(HttpMethod.Get, $"/discord/login/status?state={state}");
         AddToken(request);
+        AddInstallHeaders(request);
         var response = await _fixture.Client.SendAsync(request);
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
@@ -197,6 +203,7 @@ public sealed class DiscordLoginTests : IClassFixture<DiscordLoginFixture>
 
         var request = new HttpRequestMessage(HttpMethod.Get, $"/discord/login/status?state={state}");
         AddToken(request);
+        AddInstallHeaders(request);
         request.Headers.Add(ShareConstants.LoginNonceHeader, "wrong-nonce");
         var response = await _fixture.Client.SendAsync(request);
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
@@ -225,6 +232,7 @@ public sealed class DiscordLoginTests : IClassFixture<DiscordLoginFixture>
 
         var delete = new HttpRequestMessage(HttpMethod.Delete, $"/discord/login/{state}");
         AddToken(delete);
+        AddInstallHeaders(delete);
         delete.Headers.Add(ShareConstants.LoginNonceHeader, nonce);
         var deleteResponse = await _fixture.Client.SendAsync(delete);
         Assert.Equal(HttpStatusCode.NoContent, deleteResponse.StatusCode);
@@ -240,6 +248,7 @@ public sealed class DiscordLoginTests : IClassFixture<DiscordLoginFixture>
 
         var delete = new HttpRequestMessage(HttpMethod.Delete, $"/discord/login/{state}");
         AddToken(delete);
+        AddInstallHeaders(delete);
         delete.Headers.Add(ShareConstants.LoginNonceHeader, "wrong-nonce");
         var deleteResponse = await _fixture.Client.SendAsync(delete);
         Assert.Equal(HttpStatusCode.NoContent, deleteResponse.StatusCode); // idempotent
@@ -249,23 +258,154 @@ public sealed class DiscordLoginTests : IClassFixture<DiscordLoginFixture>
         Assert.Equal("pending", status.RootElement.GetProperty("status").GetString());
     }
 
+    [Fact]
+    public async Task Delete_with_missing_install_pair_keeps_the_attempt()
+    {
+        var (state, nonce) = await StartLoginAsync();
+
+        // Correct nonce but no install headers — the possession gate must refuse to remove.
+        var delete = new HttpRequestMessage(HttpMethod.Delete, $"/discord/login/{state}");
+        AddToken(delete);
+        delete.Headers.Add(ShareConstants.LoginNonceHeader, nonce);
+        var deleteResponse = await _fixture.Client.SendAsync(delete);
+        Assert.Equal(HttpStatusCode.NoContent, deleteResponse.StatusCode); // idempotent
+
+        // The attempt survives — the next full-pair poll still answers pending.
+        using var status = JsonDocument.Parse(await GetStatusJsonAsync(state, nonce));
+        Assert.Equal("pending", status.RootElement.GetProperty("status").GetString());
+    }
+
+    [Fact]
+    public async Task Delete_with_wrong_install_id_keeps_the_attempt()
+    {
+        var (state, nonce) = await StartLoginAsync();
+
+        var delete = new HttpRequestMessage(HttpMethod.Delete, $"/discord/login/{state}");
+        AddToken(delete);
+        delete.Headers.Add(ShareConstants.LoginNonceHeader, nonce);
+        delete.Headers.Add(ShareConstants.InstallIdHeader, "some-other-install");
+        delete.Headers.Add(ShareConstants.InstallSecretHeader, _installSecret);
+        var deleteResponse = await _fixture.Client.SendAsync(delete);
+        Assert.Equal(HttpStatusCode.NoContent, deleteResponse.StatusCode); // idempotent
+
+        // The attempt survives — a regression that drops the install check from the DELETE
+        // (the endpoint that removes pending attempts) would surface here as an early 404.
+        using var status = JsonDocument.Parse(await GetStatusJsonAsync(state, nonce));
+        Assert.Equal("pending", status.RootElement.GetProperty("status").GetString());
+    }
+
+    [Fact]
+    public async Task Start_rejects_an_empty_install_id()
+    {
+        // Empty/whitespace id is refused like a missing one — fail closed in ResolveInstall.
+        var request = new HttpRequestMessage(HttpMethod.Post, "/discord/login/start");
+        AddToken(request);
+        request.Headers.Add(ShareConstants.InstallIdHeader, string.Empty);
+        var response = await _fixture.Client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Start_requires_an_install_id()
+    {
+        // S2: without the per-install identity the login cannot start — a script holding
+        // only the public upload token is refused.
+        var request = new HttpRequestMessage(HttpMethod.Post, "/discord/login/start");
+        AddToken(request);
+        var response = await _fixture.Client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Start_with_known_install_and_correct_secret_succeeds()
+    {
+        var (_, _) = await StartLoginAsync(); // onboards _installId, captures _installSecret
+
+        // A second start from the SAME install (id + issued secret) must succeed — and not
+        // issue yet another secret (the app already holds it).
+        var request = new HttpRequestMessage(HttpMethod.Post, "/discord/login/start");
+        AddToken(request);
+        AddInstallHeaders(request);
+        var response = await _fixture.Client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal(_installId, doc.RootElement.GetProperty("installId").GetString());
+        Assert.Equal(JsonValueKind.Null, doc.RootElement.GetProperty("installSecret").ValueKind);
+    }
+
+    [Fact]
+    public async Task Start_with_known_install_and_wrong_secret_is_rejected()
+    {
+        var (_, _) = await StartLoginAsync(); // onboards _installId
+
+        var request = new HttpRequestMessage(HttpMethod.Post, "/discord/login/start");
+        AddToken(request);
+        request.Headers.Add(ShareConstants.InstallIdHeader, _installId);
+        request.Headers.Add(ShareConstants.InstallSecretHeader, "wrong-secret");
+        var response = await _fixture.Client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Status_requires_the_install_pair()
+    {
+        var (state, nonce) = await StartLoginAsync();
+
+        // Token + nonce, but no install headers — the poll must still be refused.
+        var request = new HttpRequestMessage(HttpMethod.Get, $"/discord/login/status?state={state}");
+        AddToken(request);
+        request.Headers.Add(ShareConstants.LoginNonceHeader, nonce);
+        var response = await _fixture.Client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Status_rejects_a_wrong_install_id()
+    {
+        var (state, nonce) = await StartLoginAsync();
+
+        var request = new HttpRequestMessage(HttpMethod.Get, $"/discord/login/status?state={state}");
+        AddToken(request);
+        request.Headers.Add(ShareConstants.LoginNonceHeader, nonce);
+        request.Headers.Add(ShareConstants.InstallIdHeader, "some-other-install");
+        request.Headers.Add(ShareConstants.InstallSecretHeader, _installSecret);
+        var response = await _fixture.Client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
     private static string NewCode() => Guid.NewGuid().ToString("N");
+
+    // S2 per-test install identity: every test onboards a fresh install, so the possession
+    // registry (shared per fixture/class) never collides across tests.
+    private readonly string _installId = Guid.NewGuid().ToString("N");
+    private string _installSecret = null!; // filled by StartLoginAsync from the onboarded response
 
     private async Task<(string State, string Nonce)> StartLoginAsync()
     {
         var request = new HttpRequestMessage(HttpMethod.Post, "/discord/login/start");
         AddToken(request);
+        // First contact: send only the id — the server onboards it and answers with the
+        // issued possession secret, which the test persists for the status/delete calls.
+        request.Headers.Add(ShareConstants.InstallIdHeader, _installId);
         var response = await _fixture.Client.SendAsync(request);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        _installSecret = doc.RootElement.GetProperty("installSecret").GetString()!;
         return (doc.RootElement.GetProperty("state").GetString()!,
                 doc.RootElement.GetProperty("nonce").GetString()!);
+    }
+
+    private void AddInstallHeaders(HttpRequestMessage request)
+    {
+        request.Headers.Add(ShareConstants.InstallIdHeader, _installId);
+        request.Headers.Add(ShareConstants.InstallSecretHeader, _installSecret);
     }
 
     private async Task<HttpResponseMessage> GetStatusAsync(string state, string nonce)
     {
         var request = new HttpRequestMessage(HttpMethod.Get, $"/discord/login/status?state={state}");
         AddToken(request);
+        AddInstallHeaders(request);
         request.Headers.Add(ShareConstants.LoginNonceHeader, nonce);
         return await _fixture.Client.SendAsync(request);
     }

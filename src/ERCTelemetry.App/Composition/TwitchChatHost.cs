@@ -80,10 +80,21 @@ public sealed class TwitchChatHost : IDisposable
     /// message for the Settings tab.</summary>
     public async Task<string> StartLoginAsync()
     {
-        using var client = new TwitchLoginClient(() => _settings.Current.ShareBaseUrl, _tokenResolver);
+        EnsureInstallId();
+        using var client = new TwitchLoginClient(
+            () => _settings.Current.ShareBaseUrl, _tokenResolver,
+            installId: () => _settings.Current.InstallId,
+            installSecret: () => _settings.Current.InstallSecret);
         try
         {
-            var start = await client.StartAsync(_stop.Token).ConfigureAwait(false);
+            var start = await StartWithPossessionSelfHealAsync(client).ConfigureAwait(false);
+            // S2: the server may have onboarded this installation on first contact — persist
+            // the issued possession secret so the status polls prove the same install.
+            if (!string.IsNullOrWhiteSpace(start.InstallSecret))
+            {
+                _settings.Update(settings => settings with { InstallSecret = start.InstallSecret });
+            }
+
             try
             {
                 Process.Start(new ProcessStartInfo(start.AuthorizeUrl) { UseShellExecute = true });
@@ -136,6 +147,48 @@ public sealed class TwitchChatHost : IDisposable
             App.Log($"Twitch login failed: {ex.Message}");
             return $"Login fehlgeschlagen: {ex.Message}";
         }
+    }
+
+    /// <summary>Runs the share-server login start, self-healing the S2 possession binding on
+    /// a 403: the server then still holds a secret for our install id that this app no
+    /// longer has (secret lost, first-contact response dropped, or a stale onboarding-race
+    /// write). It refuses with Forbidden — so the app abandons the dead identity (fresh id
+    /// + cleared secret in one atomic update) and retries once: an unknown id always
+    /// re-onboards cleanly. The client feeds off the settings Funcs, so the retry already
+    /// uses the new identity.</summary>
+    private static bool IsPossessionRejection(Exception ex) =>
+        ex is InvalidOperationException && ex.Message.Contains("Forbidden");
+
+    private async Task<TwitchLoginStart> StartWithPossessionSelfHealAsync(TwitchLoginClient client)
+    {
+        try
+        {
+            return await client.StartAsync(_stop.Token).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (IsPossessionRejection(ex))
+        {
+            App.Log($"Share login possession binding stale, refreshing install id: {ex.Message}");
+            _settings.Update(settings => settings with
+            {
+                InstallId = Guid.NewGuid().ToString("N"),
+                InstallSecret = null,
+            });
+            return await client.StartAsync(_stop.Token).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>Generates (and persists) the per-install identity on first login so the
+    /// share server can bind the OAuth flow to this installation (S2). Afterwards the
+    /// settings Funcs feed each client with the id + the possession secret the server
+    /// issued on first contact. Idempotent inside the atomic AppSettingsService.Update: a
+    /// concurrent first login that already generated the id is left in place instead of
+    /// being overwritten with a second fresh id.</summary>
+    private void EnsureInstallId()
+    {
+        _settings.Update(settings =>
+            string.IsNullOrWhiteSpace(settings.InstallId)
+                ? settings with { InstallId = Guid.NewGuid().ToString("N") }
+                : settings);
     }
 
     private async Task SnapshotLoopAsync(CancellationToken ct)

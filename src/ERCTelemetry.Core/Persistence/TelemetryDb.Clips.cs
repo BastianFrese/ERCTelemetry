@@ -33,7 +33,8 @@ public sealed partial class TelemetryDb
     /// uid, not the row id). Null when the session was never opened in this DB.</summary>
     public long? GetSessionIdByUid(ulong uid)
     {
-        using var cmd = _connection.CreateCommand();
+        using var connection = OpenReader();
+        using var cmd = connection.CreateCommand();
         cmd.CommandText = "SELECT id FROM sessions WHERE session_uid = @p1";
         Bind(cmd, 1, (long)uid);
         var result = cmd.ExecuteScalar();
@@ -82,7 +83,8 @@ public sealed partial class TelemetryDb
     public IReadOnlyList<StoredClip> GetClips(long sessionId)
     {
         var list = new List<StoredClip>();
-        using var cmd = _connection.CreateCommand();
+        using var connection = OpenReader();
+        using var cmd = connection.CreateCommand();
         cmd.CommandText = """
             SELECT id, utc, file_path, lap_number, car_index, second_car_index,
                    driver_name, second_driver_name, severity, duration_seconds, file_size_bytes

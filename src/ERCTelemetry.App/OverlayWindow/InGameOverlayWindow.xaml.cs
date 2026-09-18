@@ -338,6 +338,15 @@ public partial class InGameOverlayWindow : Window
 
     public void Stop() => _timer.Stop();
 
+    /// <summary>Stops the snapshot timer on close — before this, the window closed but the
+    /// 30 fps timer kept ticking (busy channel polling) for the whole multi-second app
+    /// teardown until process exit (LOW, 2026-09-16).</summary>
+    protected override void OnClosed(EventArgs e)
+    {
+        _timer.Stop();
+        base.OnClosed(e);
+    }
+
     /// <summary>Re-asserts HWND_TOPMOST so the HUD stays above the game window (some
     /// fullscreen-optimized game windows demote TOPMOST z-order).</summary>
     private void EnsureTopmost()

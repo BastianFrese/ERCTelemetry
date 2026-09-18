@@ -16,15 +16,23 @@ public sealed partial class TelemetryDb : IDisposable
     private const int AbandonedState = 2;
 
     private readonly SqliteConnection _connection;
+    private readonly string _readerConnectionString;
 
     public TelemetryDb(string? path = null)
     {
         var dbPath = path ?? DefaultPath();
         Directory.CreateDirectory(Path.GetDirectoryName(dbPath)!);
         _connection = new SqliteConnection($"Data Source={dbPath};Pooling=False");
+        _readerConnectionString = new SqliteConnectionStringBuilder
+        {
+            DataSource = dbPath,
+            Mode = SqliteOpenMode.ReadWriteCreate,
+            Pooling = true,
+        }.ToString();
         _connection.Open();
         Exec("PRAGMA journal_mode=WAL;"); // crash-safe + concurrent readers
         Exec("PRAGMA synchronous=NORMAL;");
+        Exec("PRAGMA busy_timeout=5000;"); // writer waits for an overlapping read-backed step
         EnsureSchema();
     }
 
@@ -33,7 +41,32 @@ public sealed partial class TelemetryDb : IDisposable
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "ERCTelemetry", "telemetry.db");
 
-    public void Dispose() => _connection.Dispose();
+    public void Dispose()
+    {
+        _connection.Dispose();
+        // The pooled reader connections return to the process-wide pool when their
+        // using-scopes exit and stay open for reuse — they keep the database file handle
+        // alive, so deleting or replacing the file still fails with "in use by another
+        // process". Clear the pool so the file handle is released. Only idle pooled
+        // connections are closed; one still checked out by a concurrent reader is left
+        // alone, so this is safe even mid-read (shutdown / test teardown).
+        SqliteConnection.ClearAllPools();
+    }
+
+    /// <summary>Opens a short-lived pooled connection for a History/Report read. Reads
+    /// never share the pump's <see cref="_connection"/> object — Microsoft.Data.Sqlite
+    /// connections are not thread-safe — and WAL lets a reader snapshot the last committed
+    /// state while the pump writes. The busy timeout absorbs a rare simultaneous commit
+    /// without a "database is locked". Pooled, so opening one per call is cheap.</summary>
+    private SqliteConnection OpenReader()
+    {
+        var connection = new SqliteConnection(_readerConnectionString);
+        connection.Open();
+        using var setup = connection.CreateCommand();
+        setup.CommandText = "PRAGMA busy_timeout=5000;";
+        setup.ExecuteNonQuery();
+        return connection;
+    }
 
     private void Exec(string sql)
     {
@@ -199,7 +232,8 @@ public sealed partial class TelemetryDb : IDisposable
     /// used for additive schema migrations).</summary>
     private bool ColumnExists(string table, string column)
     {
-        using var cmd = _connection.CreateCommand();
+        using var connection = OpenReader();
+        using var cmd = connection.CreateCommand();
         cmd.CommandText = $"PRAGMA table_info({table})";
         using var reader = cmd.ExecuteReader();
         while (reader.Read())
@@ -257,10 +291,14 @@ public sealed partial class TelemetryDb : IDisposable
         return id;
     }
 
-    /// <summary>Single-cell long lookup helper (ExecuteScalar, 0 when nothing matches).</summary>
-    private long QueryLong(string sql, Action<SqliteCommand> bind)
+    /// <summary>Single-cell long lookup helper (ExecuteScalar, 0 when nothing matches).
+    /// The two-arg form runs on the writer connection; the overload lets a read run on
+    /// its own pooled reader connection instead of sharing <see cref="_connection"/>.</summary>
+    private long QueryLong(string sql, Action<SqliteCommand> bind) => QueryLong(_connection, sql, bind);
+
+    private long QueryLong(SqliteConnection connection, string sql, Action<SqliteCommand> bind)
     {
-        using var cmd = _connection.CreateCommand();
+        using var cmd = connection.CreateCommand();
         cmd.CommandText = sql;
         bind(cmd);
         return (long)(cmd.ExecuteScalar() ?? 0L);
@@ -337,7 +375,8 @@ public sealed partial class TelemetryDb : IDisposable
         uint lapTimeMs;
         ushort trackLength;
 
-        using (var cmd = _connection.CreateCommand())
+        using var connection = OpenReader();
+        using (var cmd = connection.CreateCommand())
         {
             cmd.CommandText = """
                 SELECT lt.samples, lt.lap_time_ms, s.track_length
@@ -368,7 +407,8 @@ public sealed partial class TelemetryDb : IDisposable
     public IReadOnlyList<LapTraceSummary> GetLapTraceSummaries(long sessionId)
     {
         var result = new List<LapTraceSummary>();
-        using var cmd = _connection.CreateCommand();
+        using var connection = OpenReader();
+        using var cmd = connection.CreateCommand();
         cmd.CommandText = """
             SELECT car_index, lap_number, lap_time_ms FROM lap_traces
             WHERE session_id = @p1 ORDER BY lap_number
@@ -397,7 +437,8 @@ public sealed partial class TelemetryDb : IDisposable
         string sessionType;
         string startedUtc;
 
-        using (var cmd = _connection.CreateCommand())
+        using var connection = OpenReader();
+        using (var cmd = connection.CreateCommand())
         {
             cmd.CommandText = """
                 SELECT lt.samples, lt.lap_time_ms, lt.lap_number, s.track_length,
@@ -524,8 +565,11 @@ public sealed partial class TelemetryDb : IDisposable
     /// Feeds the PB threshold the session store compares the player's laps against.</summary>
     public uint GetTrackBestLapMs(string track)
     {
-        return (uint)Math.Max(0, QueryLong("SELECT best_lap_ms FROM track_bests WHERE track = @p1",
-            cmd => Bind(cmd, 1, track)));
+        using var connection = OpenReader();
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT best_lap_ms FROM track_bests WHERE track = @p1";
+        Bind(cmd, 1, track);
+        return (uint)Math.Max(0, (long)(cmd.ExecuteScalar() ?? 0L));
     }
 
     /// <summary>Stores a track's all-time best lap — monotonic: a slower lap never
@@ -715,7 +759,8 @@ public sealed partial class TelemetryDb : IDisposable
     public IReadOnlyList<SessionSummary> GetSessions()
     {
         var list = new List<SessionSummary>();
-        using var cmd = _connection.CreateCommand();
+        using var connection = OpenReader();
+        using var cmd = connection.CreateCommand();
         cmd.CommandText = """
             SELECT s.id, s.session_uid, s.session_type, s.track, s.is_network_game,
                    s.started_utc, s.finalized,
@@ -832,7 +877,8 @@ public sealed partial class TelemetryDb : IDisposable
         }
 
         var items = new List<SessionCard>();
-        using (var cmd = _connection.CreateCommand())
+        using var connection = OpenReader();
+        using (var cmd = connection.CreateCommand())
         {
             cmd.CommandText = $"""
                 SELECT s.id, s.session_uid, s.session_type, s.track, s.started_utc, s.finalized,
@@ -883,9 +929,9 @@ public sealed partial class TelemetryDb : IDisposable
         }
 
         int total;
-        using (var cmd = _connection.CreateCommand())
+        using (var cmd = connection.CreateCommand())
         {
-            total = checked((int)QueryLong($"SELECT COUNT(*) FROM sessions s {whereSql}",
+            total = checked((int)QueryLong(connection, $"SELECT COUNT(*) FROM sessions s {whereSql}",
                 cmd => BindAll(cmd, withPaging: false)));
         }
 
@@ -909,7 +955,8 @@ public sealed partial class TelemetryDb : IDisposable
     private IReadOnlyList<string> QueryStrings(string sql)
     {
         var list = new List<string>();
-        using var cmd = _connection.CreateCommand();
+        using var connection = OpenReader();
+        using var cmd = connection.CreateCommand();
         cmd.CommandText = sql;
         using var reader = cmd.ExecuteReader();
         while (reader.Read())
@@ -924,7 +971,8 @@ public sealed partial class TelemetryDb : IDisposable
     public IReadOnlyList<FinalResultRow> GetResults(long sessionId)
     {
         var list = new List<FinalResultRow>();
-        using var cmd = _connection.CreateCommand();
+        using var connection = OpenReader();
+        using var cmd = connection.CreateCommand();
         cmd.CommandText = """
             SELECT car_index, position, name, team, race_number, num_laps, grid_position,
                    points, result_status, best_lap_ms, total_race_seconds,
@@ -960,7 +1008,8 @@ public sealed partial class TelemetryDb : IDisposable
     public IReadOnlyDictionary<byte, string> GetDriverNames(long sessionId)
     {
         var map = new Dictionary<byte, string>();
-        using var cmd = _connection.CreateCommand();
+        using var connection = OpenReader();
+        using var cmd = connection.CreateCommand();
         cmd.CommandText = "SELECT car_index, name FROM drivers WHERE session_id = @p1";
         Bind(cmd, 1, sessionId);
         using var reader = cmd.ExecuteReader();
@@ -976,7 +1025,8 @@ public sealed partial class TelemetryDb : IDisposable
     public IReadOnlyList<LapCompleted> GetLaps(long sessionId)
     {
         var list = new List<LapCompleted>();
-        using var cmd = _connection.CreateCommand();
+        using var connection = OpenReader();
+        using var cmd = connection.CreateCommand();
         cmd.CommandText = """
             SELECT car_index, lap_number, lap_time_ms, sector1_ms, sector2_ms,
                    tyre, tyre_age_laps, position, ers_used_j
@@ -1012,7 +1062,8 @@ public sealed partial class TelemetryDb : IDisposable
     {
         var filterPlayer = playerCarIndex is not null && playerCarIndex.Value < TelemetryConstants.MaxCars;
         var list = new List<RaceEventEntry>();
-        using var cmd = _connection.CreateCommand();
+        using var connection = OpenReader();
+        using var cmd = connection.CreateCommand();
         // Single interpolated literal so the line breaks between the WHERE clause and the
         // injected player filter / ORDER BY stay intact.
         var eventFilter = filterPlayer
@@ -1056,7 +1107,8 @@ public sealed partial class TelemetryDb : IDisposable
     {
         var filterPlayer = playerCarIndex is not null && playerCarIndex.Value < TelemetryConstants.MaxCars;
         var list = new List<StoredOvertake>();
-        using var cmd = _connection.CreateCommand();
+        using var connection = OpenReader();
+        using var cmd = connection.CreateCommand();
         // Single interpolated literal so the line breaks around the injected player filter stay intact.
         var overtakeFilter = filterPlayer
             ? "AND (car_index = @p2 OR passed_car_index = @p2)"
@@ -1119,7 +1171,8 @@ public sealed partial class TelemetryDb : IDisposable
         int races = 0, wins = 0, podiums = 0;
         double avgGrid = 0, points = 0;
 
-        using (var cmd = _connection.CreateCommand())
+        using var connection = OpenReader();
+        using (var cmd = connection.CreateCommand())
         {
             cmd.CommandText = """
                 SELECT COUNT(*),
@@ -1146,7 +1199,7 @@ public sealed partial class TelemetryDb : IDisposable
             }
         }
 
-        using (var cmd = _connection.CreateCommand())
+        using (var cmd = connection.CreateCommand())
         {
             cmd.CommandText = """
                 SELECT s.track, COUNT(*), AVG(r.position)
@@ -1177,7 +1230,8 @@ public sealed partial class TelemetryDb : IDisposable
     public ChampionshipData GetChampionship()
     {
         var races = new List<ChampionshipRace>();
-        using (var cmd = _connection.CreateCommand())
+        using var connection = OpenReader();
+        using (var cmd = connection.CreateCommand())
         {
             cmd.CommandText = """
                 SELECT s.id, s.track, s.started_utc
@@ -1198,7 +1252,7 @@ public sealed partial class TelemetryDb : IDisposable
         }
 
         var playerRaces = new List<PlayerRaceResult>();
-        using (var cmd = _connection.CreateCommand())
+        using (var cmd = connection.CreateCommand())
         {
             cmd.CommandText = """
                 SELECT s.track, s.started_utc, r.position, r.points
@@ -1229,7 +1283,8 @@ public sealed partial class TelemetryDb : IDisposable
     /// Used to highlight the player's row in the local ELO leaderboard.</summary>
     public string? GetPlayerName()
     {
-        using var cmd = _connection.CreateCommand();
+        using var connection = OpenReader();
+        using var cmd = connection.CreateCommand();
         cmd.CommandText = """
             SELECT r.name
             FROM results r

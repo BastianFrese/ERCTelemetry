@@ -17,7 +17,7 @@
     <RootNamespace>ERCTelemetry.App</RootNamespace>
     <AssemblyName>ERCTelemetry</AssemblyName>
     <ApplicationIcon>erc.ico</ApplicationIcon>
-    <Version>0.6.4.1</Version>
+    <Version>0.7.0</Version>
     <LangVersion>latest</LangVersion>
     <!-- GeneratedComInterface (HdrFrameSource's IGraphicsCaptureItemInterop) needs
          unsafe code for the generated COM marshaling. -->

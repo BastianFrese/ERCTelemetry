@@ -27,6 +27,7 @@ public sealed class ClipRecorderService : IDisposable
     private bool _isNetworkGame;
     private DateTimeOffset _lastClipAt;
     private IReadOnlyList<DriverEntry> _drivers = Array.Empty<DriverEntry>();
+    private long _inFlightSaves; // Interlocked count of active SaveAsync calls
 
     public ClipRecorderService(AppServices services, ScreenCaptureService capture)
     {
@@ -127,29 +128,47 @@ public sealed class ClipRecorderService : IDisposable
 
     private async Task SaveAsync(ClipMetadata metadata)
     {
-        await _saveGate.WaitAsync();
+        // In-flight zählen, damit Dispose auf einen laufenden Encode wartet (bounded) statt
+        // ihn verwaist weiterlaufen zu lassen.
+        Interlocked.Increment(ref _inFlightSaves);
         try
         {
-            var result = await _capture.SaveClipAsync(metadata, _stop.Token);
-            if (result is null)
+            try
             {
-                return;
+                await _saveGate.WaitAsync(_stop.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                return; // shutdown while queued behind another save — nothing to record
             }
 
-            var clip = new ClipSaved(
-                metadata.SessionUid, metadata.Utc, result.Path, metadata.LapNumber,
-                metadata.CarIndex, metadata.SecondCarIndex, metadata.DriverName,
-                metadata.SecondDriverName, metadata.Severity,
-                result.DurationSeconds, new FileInfo(result.Path).Length);
-            await _services.Events.Writer.WriteAsync(clip, _stop.Token);
-        }
-        catch (Exception ex)
-        {
-            App.Log($"Clip save failed: {ex.Message}");
+            try
+            {
+                var result = await _capture.SaveClipAsync(metadata, _stop.Token);
+                if (result is null)
+                {
+                    return;
+                }
+
+                var clip = new ClipSaved(
+                    metadata.SessionUid, metadata.Utc, result.Path, metadata.LapNumber,
+                    metadata.CarIndex, metadata.SecondCarIndex, metadata.DriverName,
+                    metadata.SecondDriverName, metadata.Severity,
+                    result.DurationSeconds, new FileInfo(result.Path).Length);
+                await _services.Events.Writer.WriteAsync(clip, _stop.Token);
+            }
+            catch (Exception ex)
+            {
+                App.Log($"Clip save failed: {ex.Message}");
+            }
+            finally
+            {
+                _saveGate.Release();
+            }
         }
         finally
         {
-            _saveGate.Release();
+            Interlocked.Decrement(ref _inFlightSaves);
         }
     }
 
@@ -172,6 +191,15 @@ public sealed class ClipRecorderService : IDisposable
         }
         catch (AggregateException)
         {
+        }
+
+        // Ein zur Shutdown-Zeit laufender Encode ist durch _stop gekillt; hier bounded
+        // auf sein Ende warten, damit kein halbes MP4 ohne DB-Eintrag übrig bleibt. Länger
+        // als ~5 s hängt kein Save mehr am Gate (der Encode-Kill im Capture ist 2 s).
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(5);
+        while (Interlocked.Read(ref _inFlightSaves) > 0 && DateTimeOffset.UtcNow < deadline)
+        {
+            Thread.Sleep(50);
         }
 
         _stop.Dispose();

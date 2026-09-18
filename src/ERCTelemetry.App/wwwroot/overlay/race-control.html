@@ -74,7 +74,7 @@
 
           li.innerHTML =
             '<span class="badge">' + typeLabel(msg) + '</span>' +
-            '<span class="text">' + msg.text + '</span>' +
+            '<span class="text">' + window.overlayFormat.esc(msg.text) + '</span>' +
             '<span class="time">' + time + '</span>';
           list.appendChild(li);
 

@@ -29,6 +29,9 @@ public sealed partial class HdrFrameSource : IDisposable
     private const int MaxConsecutiveCaptureFailures = 3;
 
     private readonly object _gate = new();
+    private readonly Func<double> _fpsProvider; // FPS throttle source (live clip settings)
+    private readonly object _throttleGate = new();
+    private DateTimeOffset _lastAcceptedUtc; // throttle: last frame actually encoded + emitted
     private IDirect3DDevice? _device;
     private Direct3D11CaptureFramePool? _framePool;
     private GraphicsCaptureSession? _session;
@@ -38,6 +41,11 @@ public sealed partial class HdrFrameSource : IDisposable
     private int _disposed;
 
     private volatile int _maxWidth = 1280;
+
+    public HdrFrameSource(Func<double> fpsProvider)
+    {
+        _fpsProvider = fpsProvider;
+    }
 
     /// <summary>Maximum clip width in pixels; the aspect ratio is preserved. Changing
     /// this while capturing requires a Stop + Start (the frame pool is sized from it).
@@ -122,15 +130,18 @@ public sealed partial class HdrFrameSource : IDisposable
 
     private async void OnFrameArrived(Direct3D11CaptureFramePool sender, object args)
     {
+        DateTimeOffset utc;
+        SoftwareBitmap bitmap;
+        // Copy the surface to a CPU bitmap, then release the pool frame immediately —
+        // holding it through the JPEG encode blocks a pool buffer, so the next display
+        // frame is dropped and the real capture rate falls below the configured FPS
+        // (the clip then plays too fast). Encode after the frame is free so the pool
+        // keeps delivering while the encode runs.
+        // Dieser erste try/catch umfasst NUR den Geräte-Pfad (Frame holen + Surface-Kopie):
+        // WGC wirft hier für jeden Frame, wenn das Device verloren geht (GPU-TDR /
+        // RDP-Disconnect / Monitor-Wechsel) oder der Desktop gesperrt ist.
         try
         {
-            DateTimeOffset utc;
-            SoftwareBitmap bitmap;
-            // Copy the surface to a CPU bitmap, then release the pool frame immediately —
-            // holding it through the JPEG encode blocks a pool buffer, so the next display
-            // frame is dropped and the real capture rate falls below the configured FPS
-            // (the clip then plays too fast). Encode after the frame is free so the pool
-            // keeps delivering while the encode runs.
             using (var frame = sender.TryGetNextFrame())
             {
                 if (frame is null)
@@ -141,22 +152,12 @@ public sealed partial class HdrFrameSource : IDisposable
                 utc = DateTimeOffset.UtcNow;
                 bitmap = await SoftwareBitmap.CreateCopyFromSurfaceAsync(frame.Surface);
             }
-
-            using (bitmap)
-            {
-                var jpeg = EncodeJpeg(bitmap);
-                FrameCaptured?.Invoke(utc, jpeg);
-            }
-
-            // Ein erfolgreicher Frame beendet die Fehlerserie.
-            Interlocked.Exchange(ref _consecutiveFailures, 0);
         }
         catch (Exception ex)
         {
             // Locked desktop / RDP disconnect / device lost — skip the frame.
             App.Log($"Screen capture failed: {ex.Message}");
-            // Device lost (GPU-TDR / RDP-Disconnect / Monitor-Wechsel): WGC wirft dann für
-            // jeden Frame. Nach einer Serie Stop(), damit der nächste ManageLoop-Tick
+            // Device lost: nach einer Serie Stop(), damit der nächste ManageLoop-Tick
             // (500 ms) Pool + Device idempotent neu erstellt — ohne das bliebe die
             // Aufnahme für die ganze Session stumm und alle späteren Collision-Clips
             // hätten kein Video (MEDIUM, 2026-09-16).
@@ -177,6 +178,46 @@ public sealed partial class HdrFrameSource : IDisposable
                     App.Log($"Screen capture restart failed: {stopEx.Message}");
                 }
             }
+            return;
+        }
+
+        try
+        {
+            using (bitmap)
+            {
+                // Ein erfolgreicher Frame-Copy beendet die Fehlerserie — ob er nun gehalten
+                // wird oder nicht.
+                Interlocked.Exchange(ref _consecutiveFailures, 0);
+
+                // FPS-Throttle VOR dem JPEG-Encode: der Encode ist der teuerste Schritt im
+                // Pfad, und der ScreenCaptureService warf jeden Frame ab, der seinen
+                // minInterval-Unterschied nicht erfüllte — bei 60-fps-Display und 30-fps-
+                // Einstellung war die Hälfte aller Encode-Arbeit weggeworfen (MEDIUM,
+                // 2026-09-16). Die FPS werden pro Frame live gelesen, ein Settings-Wechsel
+                // greift sofort.
+                lock (_throttleGate)
+                {
+                    var fps = Math.Clamp(_fpsProvider(), 1, 60);
+                    if (utc - _lastAcceptedUtc < TimeSpan.FromSeconds(1.0 / fps))
+                    {
+                        return;
+                    }
+
+                    _lastAcceptedUtc = utc;
+                }
+
+                var jpeg = EncodeJpeg(bitmap);
+                FrameCaptured?.Invoke(utc, jpeg);
+            }
+        }
+        catch (Exception ex)
+        {
+            // Kein Geräteverlust — der FPS-Getter, der JPEG-Encode oder der Store des
+            // ScreenCaptureService (Disk-I/O der Rolling-Frames) werfen. Das zählt NICHT
+            // zur Fehlerserie: ein dauerhafter Disk-Fehler (voll / USB-Platte mit
+            // %LOCALAPPDATA% abgesteckt) würde sonst alle ~1,5 s einen Stop→Start-Churn
+            // anstoßen, der Pool + Device unnötig neu erstellt (MEDIUM, 2026-09-16).
+            App.Log($"Screen capture encode/store failed: {ex.Message}");
         }
     }
 

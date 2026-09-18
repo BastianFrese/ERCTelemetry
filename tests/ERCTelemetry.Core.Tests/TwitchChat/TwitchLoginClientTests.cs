@@ -12,7 +12,7 @@ public sealed class TwitchLoginClientTests
     private const string Token = "test-token";
 
     private static TwitchLoginClient Client(FakeHttpHandler handler) =>
-        new(() => BaseUrl, () => Token, handler);
+        new(() => BaseUrl, () => Token, handler, () => "install-123", () => "secret-456");
 
     [Fact]
     public async Task StartAsync_posts_to_login_start_with_token_header()
@@ -63,6 +63,20 @@ public sealed class TwitchLoginClientTests
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => client.StartAsync());
 
         Assert.Contains("konnte nicht gestartet werden", ex.Message);
+    }
+
+    [Fact]
+    public async Task StartAsync_forbidden_carries_the_status_for_the_host_self_heal()
+    {
+        // The S2 host's binding self-heal matches on this exact text: a 403 from /start
+        // means the server still holds a secret for our install id that the app no longer
+        // has, so the host drops the dead identity and retries (see TwitchChatHost).
+        var handler = new FakeHttpHandler(_ => FakeHttpHandler.Error(HttpStatusCode.Forbidden));
+        var client = Client(handler);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => client.StartAsync());
+
+        Assert.Contains("Forbidden", ex.Message);
     }
 
     [Fact]
@@ -163,12 +177,81 @@ public sealed class TwitchLoginClientTests
         var resolver = new ShareTokenResolver(() => BaseUrl, () => null, configHandler);
         var loginHandler = new FakeHttpHandler(_ => FakeHttpHandler.Json(
             """{"state":"abc123","nonce":"n123","authorizeUrl":"https://id.twitch.tv/oauth2/authorize?client_id=x"}"""));
-        var client = new TwitchLoginClient(() => BaseUrl, resolver, loginHandler);
+        var client = new TwitchLoginClient(() => BaseUrl, resolver, loginHandler, () => "install-123", () => "secret-456");
 
         var start = await client.StartAsync();
 
         Assert.Equal("auto-token", loginHandler.LastRequest?.Headers.GetValues(ShareConstants.TokenHeader).Single());
         Assert.Equal("abc123", start.State);
         Assert.Equal("n123", start.Nonce);
+    }
+
+    [Fact]
+    public async Task StartAsync_sends_the_install_headers_and_parses_the_response()
+    {
+        var handler = new FakeHttpHandler(_ => FakeHttpHandler.Json(
+            """{"state":"abc123","nonce":"n123","authorizeUrl":"https://id.twitch.tv/oauth2/authorize?client_id=x","installId":"install-123","installSecret":"secret-456"}"""));
+        var client = Client(handler);
+
+        var start = await client.StartAsync();
+
+        // Both possession headers go out on the start…
+        Assert.Equal("install-123", handler.LastRequest?.Headers.GetValues(ShareConstants.InstallIdHeader).Single());
+        Assert.Equal("secret-456", handler.LastRequest?.Headers.GetValues(ShareConstants.InstallSecretHeader).Single());
+        // …and the server's onboarding answer (id + issued secret to persist) is surfaced.
+        Assert.Equal("install-123", start.InstallId);
+        Assert.Equal("secret-456", start.InstallSecret);
+    }
+
+    [Fact]
+    public async Task StartAsync_sends_only_the_id_before_the_secret_is_issued()
+    {
+        // First login of a brand-new installation: the app has an id but no possession secret
+        // yet — the client must send the id alone and the server onboards it.
+        var handler = new FakeHttpHandler(_ => FakeHttpHandler.Json(
+            """{"state":"abc123","nonce":"n123","authorizeUrl":"https://id.twitch.tv/oauth2/authorize?client_id=x","installId":"install-123","installSecret":"secret-456"}"""));
+        var client = new TwitchLoginClient(() => BaseUrl, () => Token, handler, () => "install-123");
+
+        var start = await client.StartAsync();
+
+        Assert.Equal("install-123", handler.LastRequest?.Headers.GetValues(ShareConstants.InstallIdHeader).Single());
+        Assert.False(handler.LastRequest?.Headers.Contains(ShareConstants.InstallSecretHeader));
+        // The freshly issued secret comes back in the start response for the app to persist.
+        Assert.Equal("secret-456", start.InstallSecret);
+    }
+
+    [Fact]
+    public async Task StartAsync_throws_without_an_install_id()
+    {
+        var handler = new FakeHttpHandler(_ => FakeHttpHandler.Json("{}"));
+        var client = new TwitchLoginClient(() => BaseUrl, () => Token, handler); // no installId Func
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => client.StartAsync());
+
+        Assert.Contains("Keine Install-Id", ex.Message);
+    }
+
+    [Fact]
+    public async Task GetStatusAsync_sends_the_install_headers()
+    {
+        var handler = new FakeHttpHandler(_ => FakeHttpHandler.Json("""{"status":"pending"}"""));
+        var client = Client(handler);
+
+        await client.GetStatusAsync("abc123", "n123");
+
+        Assert.Equal("install-123", handler.LastRequest?.Headers.GetValues(ShareConstants.InstallIdHeader).Single());
+        Assert.Equal("secret-456", handler.LastRequest?.Headers.GetValues(ShareConstants.InstallSecretHeader).Single());
+    }
+
+    [Fact]
+    public async Task DeleteAsync_sends_the_install_headers()
+    {
+        var handler = new FakeHttpHandler(_ => new HttpResponseMessage(HttpStatusCode.NoContent));
+        var client = Client(handler);
+
+        await client.DeleteAsync("abc123", "n123");
+
+        Assert.Equal("install-123", handler.LastRequest?.Headers.GetValues(ShareConstants.InstallIdHeader).Single());
+        Assert.Equal("secret-456", handler.LastRequest?.Headers.GetValues(ShareConstants.InstallSecretHeader).Single());
     }
 }

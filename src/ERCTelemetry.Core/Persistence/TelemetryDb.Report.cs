@@ -612,7 +612,8 @@ public sealed partial class TelemetryDb
     /// <summary>Loads one session's header facts. Null when the id is unknown.</summary>
     public SessionRow? GetSession(long id)
     {
-        using var cmd = _connection.CreateCommand();
+        using var connection = OpenReader();
+        using var cmd = connection.CreateCommand();
         cmd.CommandText = """
             SELECT id, session_uid, session_type, track, total_laps, track_length,
                    game_mode, weather, is_network_game, player_car_index, track_temp,
@@ -684,7 +685,8 @@ public sealed partial class TelemetryDb
     public IReadOnlyList<StoredLapRow> GetLapRows(long sessionId)
     {
         var list = new List<StoredLapRow>();
-        using var cmd = _connection.CreateCommand();
+        using var connection = OpenReader();
+        using var cmd = connection.CreateCommand();
         cmd.CommandText = """
             SELECT car_index, lap_number, lap_time_ms, sector1_ms, sector2_ms, sector3_ms,
                    valid_flags, is_valid, fuel_used, pit_status, pit_stops, penalties_s,
@@ -736,7 +738,8 @@ public sealed partial class TelemetryDb
     public IReadOnlyList<StoredStintRow> GetStints(long sessionId)
     {
         var list = new List<StoredStintRow>();
-        using var cmd = _connection.CreateCommand();
+        using var connection = OpenReader();
+        using var cmd = connection.CreateCommand();
         cmd.CommandText = """
             SELECT car_index, stint_index, actual_compound, visual_compound, end_lap, source
             FROM tyre_stints WHERE session_id = @p1 ORDER BY car_index, stint_index, source
@@ -762,7 +765,8 @@ public sealed partial class TelemetryDb
     public IReadOnlyDictionary<int, byte[][]> GetLapPositions(long sessionId)
     {
         var map = new Dictionary<int, byte[][]>();
-        using var cmd = _connection.CreateCommand();
+        using var connection = OpenReader();
+        using var cmd = connection.CreateCommand();
         cmd.CommandText = "SELECT starting_lap, num_laps, positions FROM lap_positions WHERE session_id = @p1 ORDER BY starting_lap";
         Bind(cmd, 1, sessionId);
         using var reader = cmd.ExecuteReader();
@@ -798,7 +802,8 @@ public sealed partial class TelemetryDb
     public IReadOnlyList<DamageLogRow> GetDamageLog(long sessionId)
     {
         var list = new List<DamageLogRow>();
-        using var cmd = _connection.CreateCommand();
+        using var connection = OpenReader();
+        using var cmd = connection.CreateCommand();
         cmd.CommandText = """
             SELECT car_index, utc, lap_number, flw, frw, rw, floor, diffuser, sidepod,
                    brake_front, brake_rear, gearbox_damage, engine_damage, drs_fault,
@@ -851,7 +856,8 @@ public sealed partial class TelemetryDb
     public IReadOnlyList<MotionSummaryRow> GetMotionSummaries(long sessionId)
     {
         var list = new List<MotionSummaryRow>();
-        using var cmd = _connection.CreateCommand();
+        using var connection = OpenReader();
+        using var cmd = connection.CreateCommand();
         cmd.CommandText = """
             SELECT car_index, lap_number, summary FROM lap_motion_summary
             WHERE session_id = @p1 ORDER BY car_index, lap_number
@@ -873,7 +879,8 @@ public sealed partial class TelemetryDb
     /// <summary>The player's stored setup for a session (null when none was captured).</summary>
     public CarSetupSnapshot? GetSetup(long sessionId, byte carIndex)
     {
-        using var cmd = _connection.CreateCommand();
+        using var connection = OpenReader();
+        using var cmd = connection.CreateCommand();
         cmd.CommandText = """
             SELECT front_wing, rear_wing, on_throttle, off_throttle, front_camber,
                    rear_camber, front_toe, rear_toe, front_suspension, rear_suspension,
@@ -926,7 +933,8 @@ public sealed partial class TelemetryDb
     /// <summary>True when the table exists (sqlite_master probe; migration + tests).</summary>
     public bool HasTable(string table)
     {
-        using var cmd = _connection.CreateCommand();
+        using var connection = OpenReader();
+        using var cmd = connection.CreateCommand();
         cmd.CommandText = "SELECT 1 FROM sqlite_master WHERE type='table' AND name=@p1";
         Bind(cmd, 1, table);
         return cmd.ExecuteScalar() is not null;

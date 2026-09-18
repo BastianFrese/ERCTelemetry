@@ -10,6 +10,11 @@ namespace ERCTelemetry.App.Composition;
 public sealed class AppSettingsService
 {
     private readonly string _path;
+    // Serializes read-modify-write: two hosts/threads racing an Update must not interleave
+    // "Current = change(Current)" — the change would read a stale Current and one update
+    // would silently overwrite the other (e.g. two first-login EnsureInstallId calls or a
+    // login reset racing a token save).
+    private readonly object _updateLock = new();
 
     public AppSettingsService(string? path = null)
     {
@@ -46,16 +51,19 @@ public sealed class AppSettingsService
     /// is recorded for the caller to show.</summary>
     public AppSettings Update(Func<AppSettings, AppSettings> change)
     {
-        Current = change(Current);
-        try
+        lock (_updateLock)
         {
-            AppSettingsStore.Save(Current, _path);
-            LastSaveError = null;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
-            or ArgumentException or CryptographicException)
-        {
-            LastSaveError = $"settings.json could not be saved to {_path}: {ex.Message}";
+            Current = change(Current);
+            try
+            {
+                AppSettingsStore.Save(Current, _path);
+                LastSaveError = null;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                or ArgumentException or CryptographicException)
+            {
+                LastSaveError = $"settings.json could not be saved to {_path}: {ex.Message}";
+            }
         }
 
         return Current;

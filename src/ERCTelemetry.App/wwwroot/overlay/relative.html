@@ -137,7 +137,7 @@
             tr.innerHTML =
               '<td class="pos">' + row.position + '</td>' +
               '<td class="name"><span class="tyre ' + tyreClass(row.tyreCompound) + '">' +
-                tyreText(row.tyreCompound) + '</span> ' + row.name +
+                fmt.esc(tyreText(row.tyreCompound)) + '</span> ' + fmt.esc(row.name) +
                 (row.pitStatus === 'Pitting' || row.pitStatus === 'InPit'
                   ? ' <span class="pit">PIT</span>' : '') +
               '</td>' +

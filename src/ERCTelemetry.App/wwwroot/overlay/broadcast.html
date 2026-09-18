@@ -261,6 +261,35 @@
     </div>
   </div>
 
+  <script>
+    // Ultrawide-Skalierung: die Seite ist für 1920×1080 entworfen. In größeren
+    // Quellen (z. B. 3440×1440) wird alles proportional hochskaliert (Faktor
+    // = Höhe/1080) und das Raster füllt die volle Breite — die mittlere
+    // Spalte schluckt den Zusatzplatz, statt Ränder zu zeigen. transform
+    // statt zoom, weil zoom an position:fixed-Elementen nicht durchgreift.
+    (function () {
+      function skaliere() {
+        var u = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
+        var ziele = [];
+        var b = document.querySelector('.bcast');
+        if (b) ziele.push(b);
+        var r = document.getElementById('recap');
+        if (r) ziele.push(r);
+        ziele.forEach(function (el) {
+          if (u <= 1.001) {
+            el.style.transform = ''; el.style.width = ''; el.style.height = '';
+            return;
+          }
+          el.style.transformOrigin = 'top left';
+          el.style.transform = 'scale(' + u + ')';
+          el.style.width = (100 / u) + 'vw';
+          el.style.height = (100 / u) + 'vh';
+        });
+      }
+      window.addEventListener('resize', skaliere);
+      skaliere();
+    })();
+  </script>
   <script src="overlay.js"></script>
   <script>
     (function () {
@@ -293,7 +322,7 @@
         $('s-clock').innerHTML = '<b>' + laps + '</b>';
 
         $('s-weather').innerHTML =
-          s.weather + ' · air <b>' + s.airTemperature + '°</b> · track <b>' + s.trackTemperature + '°</b>';
+          fmt.esc(s.weather) + ' · air <b>' + s.airTemperature + '°</b> · track <b>' + s.trackTemperature + '°</b>';
 
         // first rain-relevant forecast sample
         var rain = null;
@@ -397,7 +426,7 @@
           if (cls.length) tr.className = cls.join(' ');
           tr.innerHTML =
             '<td class="pos">' + row.position + '</td>' +
-            '<td class="name">' + row.name +
+            '<td class="name">' + fmt.esc(row.name) +
               (row.bestLapTimeMs > 0 && row.bestLapTimeMs === fastestOverallMs ? ' <span class="fl">FL</span>' : '') +
               sectorMarks(row) +
             '</td>' +
@@ -518,7 +547,7 @@
         li.className = 'event event-' + msg.type;
         li.innerHTML =
           '<span class="badge">' + typeLabel(msg) + '</span>' +
-          '<span class="text">' + msg.text + '</span>';
+          '<span class="text">' + fmt.esc(msg.text) + '</span>';
         list.insertBefore(li, list.firstChild); // newest on top
         while (list.children.length > MAX_EVENTS) {
           list.removeChild(list.lastChild);
@@ -548,18 +577,19 @@
           return r.resultStatus === 'Retired' || r.resultStatus === 'DidNotFinish';
         });
         $('r-title').textContent = 'RACE · FINISH';
-        $('r-pod').innerHTML = '<b>P' + winner.position + '</b> ' + winner.name;
+        $('r-pod').innerHTML = '<b>P' + winner.position + '</b> ' + fmt.esc(winner.name);
         $('r-fl').innerHTML = fl
-          ? 'Fastest lap <b>' + window.overlayFormat.lapTime(fl.bestLapTimeMs) + '</b> — ' + fl.name
+          ? 'Fastest lap <b>' + window.overlayFormat.lapTime(fl.bestLapTimeMs) + '</b> — ' + fmt.esc(fl.name)
           : '';
         $('r-mover').textContent = '';
         $('r-mover').innerHTML = mover
-          ? 'Biggest mover <b>P' + mover.pos + '</b> ' + mover.name + ' (+' + mover.gained + ')'
+          ? 'Biggest mover <b>P' + mover.pos + '</b> ' + fmt.esc(mover.name) + ' (+' + mover.gained + ')'
           : '';
         $('r-out').textContent = retired.length > 0
           ? retired.length + ' retired: ' + retired.slice(0, 3).map(function (r) { return r.name; }).join(', ') +
             (retired.length > 3 ? ' …' : '')
           : '';
+        var el = $('recap');
         el.classList.remove('hidden');
         clearTimeout(showRecap._t);
         showRecap._t = setTimeout(hideRecap, 30000); // auto-hide after 30 s

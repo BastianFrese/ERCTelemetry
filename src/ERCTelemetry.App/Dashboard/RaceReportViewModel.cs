@@ -313,28 +313,47 @@ public sealed class RaceReportViewModel : INotifyPropertyChanged
     /// must resume on the UI thread to raise PropertyChanged.</summary>
     private async Task SummarizeAsync(int version, RaceSummary summary)
     {
-        var text = await _llm!.SummarizeAsync(summary, CancellationToken.None);
-        if (string.IsNullOrWhiteSpace(text) || version != _rebuildVersion)
+        try
         {
-            return;
-        }
+            var text = await _llm!.SummarizeAsync(summary, CancellationToken.None);
+            if (string.IsNullOrWhiteSpace(text) || version != _rebuildVersion)
+            {
+                return;
+            }
 
-        LlmSummary = text;
-        OnPropertyChanged(nameof(LlmSummary));
+            LlmSummary = text;
+            OnPropertyChanged(nameof(LlmSummary));
+        }
+        catch (Exception ex)
+        {
+            // Fire-and-forget: ein LLM-Ausfall (Netz, Auth, Timeout) darf die Task nicht
+            // unobserved faulten und die L1-Paragrafen bleiben ohnehin die Quelle —
+            // trotzdem sichtbar machen, warum die Politur fehlt (MEDIUM, 2026-09-16).
+            App.Log($"L2-Racesummary fehlgeschlagen: {ex.Message}");
+            Status = "L2-Zusammenfassung fehlgeschlagen — L1-Bericht bleibt maßgeblich.";
+        }
     }
 
     /// <summary>Layer-2 coach politur — same fire-and-forget + version-guard contract as
     /// <see cref="SummarizeAsync"/>.</summary>
     private async Task CoachAsync(int version, CoachReport report)
     {
-        var text = await _llm!.CoachAsync(report, CancellationToken.None);
-        if (string.IsNullOrWhiteSpace(text) || version != _rebuildVersion)
+        try
         {
-            return;
-        }
+            var text = await _llm!.CoachAsync(report, CancellationToken.None);
+            if (string.IsNullOrWhiteSpace(text) || version != _rebuildVersion)
+            {
+                return;
+            }
 
-        LlmCoach = text;
-        OnPropertyChanged(nameof(LlmCoach));
+            LlmCoach = text;
+            OnPropertyChanged(nameof(LlmCoach));
+        }
+        catch (Exception ex)
+        {
+            App.Log($"L2-AI-Coach fehlgeschlagen: {ex.Message}");
+            Status = "L2-AI-Coach fehlgeschlagen — L1-Findings bleiben maßgeblich.";
+        }
     }
 
     private void BuildOverview()

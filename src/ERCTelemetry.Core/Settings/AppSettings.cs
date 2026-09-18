@@ -78,7 +78,9 @@ public sealed record AppSettings
         string? voice = null,
         VoiceLanguage voiceLanguage = VoiceLanguage.German,
         bool proximityAlertsEnabled = true,
-        bool liveAnalysisEnabled = false)
+        bool liveAnalysisEnabled = false,
+        string? installId = null,
+        string? installSecret = null)
     {
         UdpPort = udpPort;
         OverlayPort = overlayPort;
@@ -144,6 +146,8 @@ public sealed record AppSettings
         VoiceLanguage = voiceLanguage;
         ProximityAlertsEnabled = proximityAlertsEnabled;
         LiveAnalysisEnabled = liveAnalysisEnabled;
+        InstallId = installId;
+        InstallSecret = installSecret;
     }
 
     /// <summary>UDP port the game streams telemetry to (game side must match).</summary>
@@ -343,6 +347,20 @@ public sealed record AppSettings
     /// server's Share:Token config; null = sharing not configured.</summary>
     public string? ShareToken { get; init; }
 
+    /// <summary>Persistent per-install identity for the share-server login handshake (S2):
+    /// generated once per installation, sent as X-Install-Id on every Twitch/Discord login
+    /// call. The server issues a possession secret for it on first contact
+    /// (<see cref="InstallSecret"/>), so start + polls of a login prove they come from the
+    /// same installation that began it — a script holding only the public upload token
+    /// cannot start a login flow or poll its result away.</summary>
+    public string? InstallId { get; init; }
+
+    /// <summary>Per-install possession secret the share server issued for
+    /// <see cref="InstallId"/> on the install's first contact (X-Install-Secret header).
+    /// Persisted DPAPI-encrypted like the other secret fields (see AppSettingsStore).
+    /// Null until the first login-start response returns it.</summary>
+    public string? InstallSecret { get; init; }
+
     /// <summary>Base URL of the ERC race-result API (the /race and /leagues endpoints
     /// hang off it), e.g. "https://erdi-erc.de/api/telemetry". Null = built-in default
     /// from ErcConstants.</summary>
@@ -400,6 +418,8 @@ public sealed record AppSettings
         HudPreset = HudPresets.IsKnown(HudPreset) ? HudPreset : null,
         Clips = Clips.Sanitized(),
         ShareToken = string.IsNullOrWhiteSpace(ShareToken) ? null : ShareToken.Trim(),
+        InstallId = string.IsNullOrWhiteSpace(InstallId) ? null : InstallId.Trim(),
+        InstallSecret = string.IsNullOrWhiteSpace(InstallSecret) ? null : InstallSecret.Trim(),
         ErcApiUrl = string.IsNullOrWhiteSpace(ErcApiUrl) ? null : ErcApiUrl.Trim().TrimEnd('/'),
         ErcApiKey = string.IsNullOrWhiteSpace(ErcApiKey) ? null : ErcApiKey.Trim(),
         ForwardingEnabled = ForwardingEnabled,

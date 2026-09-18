@@ -139,6 +139,8 @@
           $('rival-best').textContent = rival ? tyreText(rival.tyreCompound) : '–';
         },
       });
+      // Entwurfsgröße 640×400 — größer gezogene Quellen skalieren mit.
+      window.overlayFit(document.getElementById('player-card'), 640, 400);
     })();
   </script>
 </body>

@@ -32,4 +32,19 @@ public static class ShareConstants
     /// POST …/login/start response (<c>nonce</c> field) and required on every status poll
     /// and delete — a third party that learns the state cannot fetch the OAuth result.</summary>
     public const string LoginNonceHeader = "X-Login-Nonce";
+
+    /// <summary>Header carrying the persistent per-install identity on every Twitch/Discord
+    /// login call. Generated once per installation (settings), stored alongside the share
+    /// token. The server issues a possession secret for it on first contact
+    /// (<see cref="InstallSecretHeader"/>), so a caller must prove it is the SAME
+    /// installation that started a login — a script holding only the public upload token
+    /// cannot start a login flow or poll its result away (S2).</summary>
+    public const string InstallIdHeader = "X-Install-Id";
+
+    /// <summary>Header carrying the per-install possession secret the server issued for
+    /// <see cref="InstallIdHeader"/> on the install's first contact. Required (with the id)
+    /// on every login start, status poll and delete — the possession proof of the S2 login
+    /// hardening. Also returned by the start endpoint (<c>installSecret</c> field) when it
+    /// onboards an install, so the app can persist it.</summary>
+    public const string InstallSecretHeader = "X-Install-Secret";
 }

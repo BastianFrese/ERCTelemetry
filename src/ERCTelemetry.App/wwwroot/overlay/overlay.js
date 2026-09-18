@@ -143,6 +143,20 @@
         return Math.max(0, Math.min(100, value)) + '%';
     }
 
+    var HTML_ENTITIES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+
+    /**
+     * HTML-escapes a string for safe insertion into innerHTML. Driver names, race-control
+     * event texts, weather and tyre compounds come from the game, the settings or LAN UDP —
+     * never from the overlay author — so they must not be parsed as markup. Numbers that
+     * survive the format helpers are trusted; every free-form string is passed through esc.
+     */
+    function esc(value) {
+        return String(value).replace(/[&<>"']/g, function (ch) {
+            return HTML_ENTITIES[ch];
+        });
+    }
+
     /**
      * Self-learning minimap. The game sends no track layout, so the map builds the
      * track outline from the cars' own positions: every reported (x, z) is quantized
@@ -467,5 +481,29 @@
         lapTime: formatLapTime,
         gap: formatGap,
         pct: pct,
+        esc: esc,
+    };
+
+    /**
+     * Skaliert ein Widget proportional hoch, wenn die Browser-Quelle größer
+     * ist als die Entwurfsgröße (z. B. Tower 760×1200 auf einer 3440×1440-
+     * Bühne). transform statt zoom, weil zoom an fixierten/fix positionierten
+     * Elementen nicht durchgreift. Kleinere Quellen bleiben unangetastet.
+     */
+    window.overlayFit = function (el, designW, designH) {
+        if (!el) return;
+        function anwenden() {
+            var u = Math.min(window.innerWidth / designW, window.innerHeight / designH);
+            if (u <= 1.001) {
+                el.style.transform = ''; el.style.width = ''; el.style.height = '';
+                return;
+            }
+            el.style.transformOrigin = 'top left';
+            el.style.transform = 'scale(' + u + ')';
+            el.style.width = designW + 'px';
+            el.style.height = designH + 'px';
+        }
+        window.addEventListener('resize', anwenden);
+        anwenden();
     };
 })();

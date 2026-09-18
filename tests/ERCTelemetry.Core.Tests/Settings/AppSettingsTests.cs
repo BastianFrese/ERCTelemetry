@@ -544,6 +544,54 @@ public sealed class AppSettingsTests : IDisposable
     }
 
     [Fact]
+    public void Save_then_load_round_trips_install_pair()
+    {
+        // S2: the persistent install id + the possession secret the share server issued
+        // for it must survive a save/load cycle (the secret encrypted on Windows, decrypted
+        // back on load — whatever the disk representation, both must come back identical).
+        const string installId = "0123456789abcdef0123456789abcdef";
+        const string installSecret = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+        var settings = new AppSettings() with { InstallId = installId, InstallSecret = installSecret };
+
+        AppSettingsStore.Save(settings, _path);
+        var loaded = AppSettingsStore.Load(_path);
+
+        Assert.Equal(installId, loaded.InstallId);
+        Assert.Equal(installSecret, loaded.InstallSecret);
+    }
+
+    [Fact]
+    public void Save_never_writes_the_install_secret_in_plain_text_on_windows()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return; // DPAPI is Windows-only; plaintext persistence is the non-Windows fallback.
+        }
+
+        var settings = new AppSettings() with { InstallId = "install-123", InstallSecret = "do-not-write-me-plain" };
+
+        AppSettingsStore.Save(settings, _path);
+        var onDisk = File.ReadAllText(_path);
+
+        // The install id is an identity, not a secret — it stays visible so the login calls
+        // can send it; the possession secret must be DPAPI-encrypted like the other secrets.
+        Assert.Contains("\"installId\": \"install-123\"", onDisk);
+        Assert.DoesNotContain("do-not-write-me-plain", onDisk);
+        Assert.Contains("\"installSecret\": \"dpapi:", onDisk);
+    }
+
+    [Fact]
+    public void NeedsSecretMigration_returns_true_for_a_legacy_plaintext_install_secret()
+    {
+        // A pre-S2 app never wrote an installSecret, so no real migration hits this — but a
+        // hand-edited or older intermediate file with the secret in the clear must be picked
+        // up by the same upgrade pass as the other secrets.
+        File.WriteAllText(_path, """{"installSecret": "legacy-plaintext-secret"}""");
+
+        Assert.True(AppSettingsStore.NeedsSecretMigration(_path));
+    }
+
+    [Fact]
     public void Save_then_load_round_trips_forwarding()
     {
         var settings = new AppSettings(

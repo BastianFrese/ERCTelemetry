@@ -207,6 +207,87 @@ var twitchLogins = new ConcurrentDictionary<string, TwitchLoginAttempt>();
 // In-flight Discord login attempts (state → attempt). Same lifecycle as the Twitch logins.
 var discordLogins = new ConcurrentDictionary<string, DiscordLoginAttempt>();
 
+// Per-install possession registry (id → entry), S2. In-memory like the attempts: a server
+// restart forgets every secret, so the app re-onboards on its next login start (the
+// response's installSecret is persisted again). Populated lazily — an unknown id on a
+// login-start call is onboarded with a fresh secret on the spot. Idle entries are evicted
+// by PurgeIdleInstallSecrets so a token-holder cannot grow the registry without bound.
+var installSecrets = new ConcurrentDictionary<string, InstallSecretEntry>();
+
+// Resolves the per-install possession claim (S2) for a login call: X-Install-Id must be
+// present; an unknown id is onboarded with a fresh secret (returned in onboardSecret so
+// the app persists it), a known id must present its registered X-Install-Secret
+// (constant-time). False → the caller must refuse the call. A script holding only the
+// public upload token can register its own fresh install this way (documented residual
+// gap), but it can never act for an install whose secret it does not possess.
+bool ResolveInstall(HttpRequest request, out string? onboardSecret)
+{
+    onboardSecret = null;
+    if (!request.Headers.TryGetValue(ShareConstants.InstallIdHeader, out var idValue))
+    {
+        return false;
+    }
+
+    var id = idValue.ToString();
+    if (string.IsNullOrWhiteSpace(id) || id.Length > 128)
+    {
+        return false;
+    }
+
+    if (installSecrets.TryGetValue(id, out var entry))
+    {
+        if (!request.Headers.TryGetValue(ShareConstants.InstallSecretHeader, out var provided) ||
+            !Program.FixedTimeEquals(entry.Secret, provided.ToString()))
+        {
+            return false;
+        }
+
+        // Refresh the idle-eviction timestamp on real possession use so an actively
+        // logging-in install is never evicted under a running (≤ 5 min) attempt.
+        installSecrets.TryUpdate(id, entry with { LastSeenUtc = DateTimeOffset.UtcNow }, entry);
+        return true;
+    }
+
+    // GetOrAdd over an indexer write: racing first-contacts for the same fresh id must ALL
+    // receive the secret that ends up stored. Last-writer-wins strands the losing caller
+    // with a stale secret the server can never re-issue → permanent 403. The factory runs
+    // at most once per effective insertion.
+    onboardSecret = installSecrets.GetOrAdd(id, static _ => new InstallSecretEntry(
+        RandomNumberGenerator.GetHexString(64), DateTimeOffset.UtcNow)).Secret;
+    return true;
+}
+
+// Verifies a status/delete call against the attempt's install binding (S2): the caller
+// must present the SAME install id the start used AND possess its registered secret. The
+// X-Login-Nonce is checked separately by the callers.
+bool MatchesAttemptInstall(HttpRequest request, string? attemptInstallId)
+{
+    if (attemptInstallId is null ||
+        !request.Headers.TryGetValue(ShareConstants.InstallIdHeader, out var idValue))
+    {
+        return false;
+    }
+
+    if (!Program.FixedTimeEquals(attemptInstallId, idValue.ToString()))
+    {
+        return false;
+    }
+
+    if (!installSecrets.TryGetValue(attemptInstallId, out var entry))
+    {
+        return false;
+    }
+
+    if (!request.Headers.TryGetValue(ShareConstants.InstallSecretHeader, out var provided) ||
+        !Program.FixedTimeEquals(entry.Secret, provided.ToString()))
+    {
+        return false;
+    }
+
+    installSecrets.TryUpdate(attemptInstallId, entry with { LastSeenUtc = DateTimeOffset.UtcNow }, entry);
+    return true;
+}
+
 // Token check: constant-time comparison, no early exit on a wrong first byte.
 bool Authorized(HttpRequest request) =>
     token.Length > 0 &&
@@ -563,13 +644,22 @@ app.MapPost("/twitch/login/start", (HttpContext ctx) =>
         return Results.Unauthorized();
     }
 
+    // S2: without a valid per-install possession claim the login cannot be started — a
+    // script holding only the public token no longer can (403).
+    if (!ResolveInstall(ctx.Request, out var onboardSecret))
+    {
+        return Results.StatusCode(StatusCodes.Status403Forbidden);
+    }
+
     PurgeExpiredLogins();
     var state = Guid.NewGuid().ToString("N");
     var nonce = Guid.NewGuid().ToString("N");
-    twitchLogins[state] = new TwitchLoginAttempt(state, DateTimeOffset.UtcNow, "pending", nonce);
+    var installId = ctx.Request.Headers[ShareConstants.InstallIdHeader].ToString();
+    twitchLogins[state] = new TwitchLoginAttempt(state, DateTimeOffset.UtcNow, "pending", nonce)
+        with { InstallId = installId };
     var authorizeUrl = TwitchOAuth.BuildAuthorizeUrl(
         TwitchOAuth.ClientId, twitchRedirectUri, TwitchOAuth.ChatScopes, state);
-    return Results.Ok(new { state, authorizeUrl, nonce });
+    return Results.Ok(new { state, authorizeUrl, nonce, installId, installSecret = onboardSecret });
 }).RequireRateLimiting("api");
 
 // GET /twitch/callback — OAuth redirect target for the Twitch login (Twitch requires
@@ -700,6 +790,18 @@ app.MapGet("/twitch/login/status", (HttpContext ctx, string state) =>
         return Results.StatusCode(StatusCodes.Status403Forbidden);
     }
 
+    // S2: the poll must come from the same installation that started the login — same
+    // install id AND its registered possession secret, otherwise 403.
+    if (!MatchesAttemptInstall(ctx.Request, attempt.InstallId))
+    {
+        return Results.StatusCode(StatusCodes.Status403Forbidden);
+    }
+
+    // The delivered single-use token must never be served from a proxy cache — a later
+    // identical ?state= request could otherwise replay it after the attempt was removed
+    // (LOW 6, 2026-09-17).
+    ctx.Response.Headers.CacheControl = "no-store";
+
     switch (attempt.Status)
     {
         case "success":
@@ -738,7 +840,8 @@ app.MapDelete("/twitch/login/{state}", (HttpContext ctx, string state) =>
 
     if (ctx.Request.Headers.TryGetValue(ShareConstants.LoginNonceHeader, out var nonce) &&
         twitchLogins.TryGetValue(state, out var attempt) &&
-        Program.FixedTimeEquals(attempt.Nonce ?? string.Empty, nonce.ToString()))
+        Program.FixedTimeEquals(attempt.Nonce ?? string.Empty, nonce.ToString()) &&
+        MatchesAttemptInstall(ctx.Request, attempt.InstallId))
     {
         twitchLogins.TryRemove(state, out _);
     }
@@ -756,20 +859,31 @@ app.MapPost("/discord/login/start", (HttpContext ctx) =>
         return Results.Unauthorized();
     }
 
+    // S2: same install-possession gate as the Twitch login start (403 without a valid
+    // per-install claim).
+    if (!ResolveInstall(ctx.Request, out var onboardSecret))
+    {
+        return Results.StatusCode(StatusCodes.Status403Forbidden);
+    }
+
     PurgeExpiredDiscordLogins();
     var state = Guid.NewGuid().ToString("N");
     var nonce = Guid.NewGuid().ToString("N");
+    var installId = ctx.Request.Headers[ShareConstants.InstallIdHeader].ToString();
     // PKCE (RFC 7636): the verifier is generated here and kept on the attempt; its S256
     // challenge goes into the authorize URL. Discord then binds the code to the verifier,
     // so a code a third party intercepts off the callback cannot be redeemed without it —
     // even though (like Twitch) the callback is public by design.
     var codeVerifier = DiscordOAuth.NewCodeVerifier();
     discordLogins[state] = new DiscordLoginAttempt(state, DateTimeOffset.UtcNow, "pending", nonce)
-        with { CodeVerifier = codeVerifier };
+    {
+        CodeVerifier = codeVerifier,
+        InstallId = installId,
+    };
     var authorizeUrl = DiscordOAuth.BuildAuthorizeUrl(
         discordClientId, discordRedirectUri, DiscordOAuth.Scopes, state,
         codeChallenge: DiscordOAuth.CodeChallenge(codeVerifier));
-    return Results.Ok(new { state, authorizeUrl, nonce });
+    return Results.Ok(new { state, authorizeUrl, nonce, installId, installSecret = onboardSecret });
 }).RequireRateLimiting("api");
 
 // GET /discord/callback — OAuth redirect target for the Discord login (Discord requires
@@ -898,6 +1012,16 @@ app.MapGet("/discord/login/status", (HttpContext ctx, string state) =>
         return Results.StatusCode(StatusCodes.Status403Forbidden);
     }
 
+    // S2: the poll must come from the same installation that started the login — same
+    // install id AND its registered possession secret, otherwise 403.
+    if (!MatchesAttemptInstall(ctx.Request, attempt.InstallId))
+    {
+        return Results.StatusCode(StatusCodes.Status403Forbidden);
+    }
+
+    // The delivered token must never be served from a proxy cache (LOW 6, 2026-09-17).
+    ctx.Response.Headers.CacheControl = "no-store";
+
     switch (attempt.Status)
     {
         case "success":
@@ -936,7 +1060,8 @@ app.MapDelete("/discord/login/{state}", (HttpContext ctx, string state) =>
 
     if (ctx.Request.Headers.TryGetValue(ShareConstants.LoginNonceHeader, out var nonce) &&
         discordLogins.TryGetValue(state, out var attempt) &&
-        Program.FixedTimeEquals(attempt.Nonce ?? string.Empty, nonce.ToString()))
+        Program.FixedTimeEquals(attempt.Nonce ?? string.Empty, nonce.ToString()) &&
+        MatchesAttemptInstall(ctx.Request, attempt.InstallId))
     {
         discordLogins.TryRemove(state, out _);
     }
@@ -956,6 +1081,8 @@ void PurgeExpiredLogins()
             twitchLogins.TryRemove(state, out _);
         }
     }
+
+    PurgeIdleInstallSecrets();
 }
 
 // Discord login attempts expire after 5 minutes — purged lazily on each new start so a
@@ -968,6 +1095,24 @@ void PurgeExpiredDiscordLogins()
         if (attempt.CreatedAt < cutoff)
         {
             discordLogins.TryRemove(state, out _);
+        }
+    }
+
+    PurgeIdleInstallSecrets();
+}
+
+// Idle possession entries are evicted too — the upload token is public, so without a bound
+// a script could onboard a fresh random id per request and grow the registry forever. An
+// evicted install simply re-onboards on its next start (the app persists the fresh secret).
+// One hour is far beyond the 5-minute attempt lifetime, so a running login is never cut.
+void PurgeIdleInstallSecrets()
+{
+    var cutoff = DateTimeOffset.UtcNow.AddHours(-1);
+    foreach (var (id, entry) in installSecrets)
+    {
+        if (entry.LastSeenUtc < cutoff)
+        {
+            installSecrets.TryRemove(id, out _);
         }
     }
 }

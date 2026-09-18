@@ -330,8 +330,19 @@ public sealed class OverlayWebHost : IDisposable
         {
             OnPrepareResponse = context =>
             {
-                // OBS browser sources cache aggressively; never let them.
+                // OBS browser sources cache aggressively; never let them. The CSP is a
+                // second layer under the pages' own escaping: driver names, event texts and
+                // weather come from the game/settings/UDP and are escaped before any
+                // innerHTML use, but if one ever slips through, 'unsafe-inline' scripts stay
+                // same-origin (overlay.js) and nothing can pull payloads or data from
+                // another host — ws/wss is the only external scheme the overlay needs.
                 context.Context.Response.Headers[HeaderNames.CacheControl] = "no-store";
+                context.Context.Response.Headers[HeaderNames.ContentSecurityPolicy] =
+                    "default-src 'none'; script-src 'self' 'unsafe-inline'; " +
+                    "style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; " +
+                    "connect-src 'self' ws: wss:; media-src 'self'; frame-src 'self'; " +
+                    "object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
+                context.Context.Response.Headers[HeaderNames.XContentTypeOptions] = "nosniff";
             },
         });
 

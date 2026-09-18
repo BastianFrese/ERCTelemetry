@@ -51,6 +51,7 @@ public static class AppSettingsStore
                 TwitchToken = DecryptSecret(loaded.TwitchToken),
                 ErcApiKey = DecryptSecret(loaded.ErcApiKey),
                 LlmApiKey = DecryptSecret(loaded.LlmApiKey),
+                InstallSecret = DecryptSecret(loaded.InstallSecret),
             }).Sanitized();
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
@@ -60,12 +61,12 @@ public static class AppSettingsStore
     }
 
     /// <summary>True when the settings file on disk holds any DPAPI-able secret (Twitch token,
-    /// ERC or LLM API key) that is NOT yet encrypted — a legacy plaintext value written before
-    /// the L1 fix. Reads the raw disk values, not the decrypted in-memory ones (Load always
-    /// returns plaintext, so the in-memory values cannot be used as the discriminator): after
-    /// the first migration the file already carries the <c>dpapi:</c> marker on every stored
-    /// secret and later launches skip the save. Never throws — a missing/unreadable file
-    /// simply means nothing to migrate.</summary>
+    /// ERC or LLM API key, install possession secret) that is NOT yet encrypted — a legacy
+    /// plaintext value written before the L1/S2 fixes. Reads the raw disk values, not the
+    /// decrypted in-memory ones (Load always returns plaintext, so the in-memory values cannot
+    /// be used as the discriminator): after the first migration the file already carries the
+    /// <c>dpapi:</c> marker on every stored secret and later launches skip the save. Never
+    /// throws — a missing/unreadable file simply means nothing to migrate.</summary>
     public static bool NeedsSecretMigration(string path)
     {
         try
@@ -78,7 +79,8 @@ public static class AppSettingsStore
             using var doc = JsonDocument.Parse(File.ReadAllText(path));
             return SecretOnDiskNeedsMigration(doc.RootElement, "twitchToken") ||
                    SecretOnDiskNeedsMigration(doc.RootElement, "ercApiKey") ||
-                   SecretOnDiskNeedsMigration(doc.RootElement, "llmApiKey");
+                   SecretOnDiskNeedsMigration(doc.RootElement, "llmApiKey") ||
+                   SecretOnDiskNeedsMigration(doc.RootElement, "installSecret");
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
         {
@@ -116,6 +118,7 @@ public static class AppSettingsStore
             TwitchToken = EncryptSecret(settings.TwitchToken),
             ErcApiKey = EncryptSecret(settings.ErcApiKey),
             LlmApiKey = EncryptSecret(settings.LlmApiKey),
+            InstallSecret = EncryptSecret(settings.InstallSecret),
         };
         var tempPath = path + ".tmp";
         File.WriteAllText(tempPath, JsonSerializer.Serialize(forDisk.Sanitized(), JsonOptions));
