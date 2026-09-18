@@ -54,32 +54,48 @@ function log(...xs) {
   console.log(new Date().toLocaleTimeString('de-DE'), ...xs);
 }
 
-// ── GoXLR (Utility-Daemon, Port 14564) — globales Node-WebSocket ────────────
+// ── GoXLR (Utility-Daemon, Port 14564) — eigener WS-Client mit Heartbeat ────
+// Bewusst NICHT der undici-WebSocket: der kann keine Pings senden und stirbt
+// still (kein Close-Event, keine Reconnects). wsVerbinde() + Heartbeat erkennt
+// tote Verbindungen zuverlässig.
 let goxlrSock;
 function verbindeGoxlr(onPatch) {
   function anlaufen() {
-    // Fehlgeschlagene Handshakes feuern evtl. nur 'error', kein 'close' —
-    // deshalb hier entkoppelt neu planen (Flag gegen Doppeltimer).
     let neuGeplant = false;
+    let heartbeat = null;
     const neu = () => {
       if (neuGeplant) return;
       neuGeplant = true;
+      if (heartbeat) clearInterval(heartbeat);
+      heartbeat = null;
       log('[goxlr] getrennt — neuer Versuch in 5 s');
       setTimeout(anlaufen, 5000);
     };
-    goxlrSock = new WebSocket(CONF.goxlr);
-    goxlrSock.addEventListener('open', () => log('[goxlr] verbunden:', CONF.goxlr));
-    goxlrSock.addEventListener('message', e => {
-      let msg;
-      try { msg = JSON.parse(String(e.data)); } catch { return; }
-      const patch = msg && msg.data && msg.data.Patch;
-      if (Array.isArray(patch)) onPatch(patch);
+    let letztesLeben = Date.now();
+    goxlrSock = wsVerbinde(CONF.goxlr, {
+      onOpen: () => log('[goxlr] verbunden:', CONF.goxlr),
+      onMessage: text => {
+        letztesLeben = Date.now();
+        let msg;
+        try { msg = JSON.parse(text); } catch { return; }
+        const patch = msg && msg.data && msg.data.Patch;
+        if (Array.isArray(patch)) onPatch(patch);
+      },
+      onPong: () => { letztesLeben = Date.now(); },
+      onClose: () => neu(),
     });
-    goxlrSock.addEventListener('error', e => {
-      log('[goxlr] Fehler:', (e.message || (e.error && e.error.message) || ''));
-      neu(); // direkt neu planen — close() hier löst Folge-Fehler aus (Kette)
-    });
-    goxlrSock.addEventListener('close', neu);
+    // Heartbeat: alle 25 s WS-Ping an den Daemon; kommt > 10 s danach kein
+    // Zeichen mehr (auch kein Pong), gilt die Verbindung als tot → Reconnect.
+    heartbeat = setInterval(() => {
+      if (Date.now() - letztesLeben > 35000) {
+        log('[goxlr] kein Leben mehr auf der Verbindung — hart trennen');
+        clearInterval(heartbeat);
+        goxlrSock.schliessen();
+        neu();
+        return;
+      }
+      goxlrSock.ping();
+    }, 25000);
   }
   anlaufen();
 }
@@ -95,48 +111,57 @@ function wsVerbinde(url, handlers) {
                'Sec-WebSocket-Key': key, 'Sec-WebSocket-Version': 13 },
   });
   const sock = { socket: null };
+  const zustand = { puffer: Buffer.alloc(0) }; // eigener Puffer je Verbindung
   let gepingt = false;
+  let geschlossen = false;
+  const beenden = () => {
+    if (geschlossen) return;
+    geschlossen = true;
+    handlers.onClose && handlers.onClose();
+  };
   req.on('upgrade', (res, socket) => {
     sock.socket = socket;
     socket.setNoDelay(true);
     // WebSocket-Ping vom Server mit Pong beantworten — Browser machen das
     // automatisch, ein roher Socket nicht. Ohne Pong killt SLOBS die Session.
-    socket.on('data', d => empfangen(d, {
+    socket.on('data', d => empfangen(d, zustand, {
       onMessage: handlers.onMessage,
-      onClose: handlers.onClose,
       onPing: payload => {
         if (!gepingt) { gepingt = true; log('[ws] Server-Ping erhalten -> Pong'); }
         socket.write(rahmen(payload, 0x8A));
       },
+      onPong: handlers.onPong,
     }));
-    socket.on('close', () => handlers.onClose && handlers.onClose());
-    socket.on('error', () => handlers.onClose && handlers.onClose());
+    socket.on('close', beenden);
+    socket.on('error', beenden);
     handlers.onOpen && handlers.onOpen();
   });
-  req.on('error', e => { console.error('[ws] ' + url + ': ' + e.message); handlers.onClose && handlers.onClose(); });
+  req.on('error', e => { console.error('[ws] ' + url + ': ' + e.message); beenden(); });
   return {
     send: text => {
       const s = sock.socket;
       if (s) s.write(rahmen(Buffer.from(text, 'utf8')));
     },
+    // Leerer WS-Ping (opcode 0x82) — Heartbeat gegen still gestorbene Verbindungen
+    ping: () => { if (sock.socket) sock.socket.write(rahmen(Buffer.alloc(0), 0x82)); },
     schliessen: () => { if (sock.socket) sock.socket.destroy(); },
   };
 }
 
-let wsPuffer = Buffer.alloc(0);
-function empfangen(d, handlers) {
-  wsPuffer = Buffer.concat([wsPuffer, d]);
+function empfangen(d, zustand, handlers) {
+  zustand.puffer = Buffer.concat([zustand.puffer, d]);
   while (true) {
-    if (wsPuffer.length < 2) return;
-    const opCode = wsPuffer[0] & 0x0f;
-    let len = wsPuffer[1] & 0x7f, off = 2;
-    if (len === 126) { if (wsPuffer.length < 4) return; len = wsPuffer.readUInt16BE(2); off = 4; }
-    else if (len === 127) { if (wsPuffer.length < 10) return; len = Number(wsPuffer.readBigUInt64BE(2)); off = 10; }
-    if (wsPuffer.length < off + len) return;
-    const text = wsPuffer.slice(off, off + len).toString('utf8');
-    wsPuffer = wsPuffer.slice(off + len);
+    if (zustand.puffer.length < 2) return;
+    const opCode = zustand.puffer[0] & 0x0f;
+    let len = zustand.puffer[1] & 0x7f, off = 2;
+    if (len === 126) { if (zustand.puffer.length < 4) return; len = zustand.puffer.readUInt16BE(2); off = 4; }
+    else if (len === 127) { if (zustand.puffer.length < 10) return; len = Number(zustand.puffer.readBigUInt64BE(2)); off = 10; }
+    if (zustand.puffer.length < off + len) return;
+    const text = zustand.puffer.slice(off, off + len).toString('utf8');
+    zustand.puffer = zustand.puffer.slice(off + len);
     if (opCode === 1 && handlers.onMessage) handlers.onMessage(text);
     else if (opCode === 9 && handlers.onPing) handlers.onPing(text);
+    else if (opCode === 10 && handlers.onPong) handlers.onPong(text);
   }
 }
 
@@ -189,7 +214,15 @@ function einzelVerbindung(ziel, beiTrennung) {
         try { msg = JSON.parse(inner); } catch { return; }
         if (msg.id === 1) {
           const w = wartend.get(1);
-          if (w) { wartend.delete(1); if (msg.error) w.ablehnen(new Error(JSON.stringify(msg.error))); else w.resolve(msg.result); }
+          wartend.delete(1);
+          if (msg.error) {
+            // Auth abgelehnt (z. B. Token fehlt nach SLOBS-Neustart) — Verbindung
+            // hart trennen, damit die Außenhülle sie neu aufbaut statt zu hängen.
+            console.error('[slobs] Auth abgelehnt: ' + JSON.stringify(msg.error));
+            sock.schliessen();
+            return;
+          }
+          if (w) w.resolve(msg.result);
           return;
         }
         if (msg.id && wartend.has(msg.id)) {
