@@ -58,6 +58,15 @@ function log(...xs) {
 let goxlrSock;
 function verbindeGoxlr(onPatch) {
   function anlaufen() {
+    // Fehlgeschlagene Handshakes feuern evtl. nur 'error', kein 'close' —
+    // deshalb hier entkoppelt neu planen (Flag gegen Doppeltimer).
+    let neuGeplant = false;
+    const neu = () => {
+      if (neuGeplant) return;
+      neuGeplant = true;
+      log('[goxlr] getrennt — neuer Versuch in 5 s');
+      setTimeout(anlaufen, 5000);
+    };
     goxlrSock = new WebSocket(CONF.goxlr);
     goxlrSock.addEventListener('open', () => log('[goxlr] verbunden:', CONF.goxlr));
     goxlrSock.addEventListener('message', e => {
@@ -66,11 +75,11 @@ function verbindeGoxlr(onPatch) {
       const patch = msg && msg.data && msg.data.Patch;
       if (Array.isArray(patch)) onPatch(patch);
     });
-    goxlrSock.addEventListener('error', e => log('[goxlr] Fehler:', (e.message || (e.error && e.error.message) || '')));
-    goxlrSock.addEventListener('close', () => {
-      log('[goxlr] getrennt — neuer Versuch in 5 s');
-      setTimeout(anlaufen, 5000);
+    goxlrSock.addEventListener('error', e => {
+      log('[goxlr] Fehler:', (e.message || (e.error && e.error.message) || ''));
+      try { goxlrSock.close(); } catch { /* schon geschlossen */ }
     });
+    goxlrSock.addEventListener('close', neu);
   }
   anlaufen();
 }
