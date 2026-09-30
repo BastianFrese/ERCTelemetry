@@ -58,9 +58,11 @@
   </ItemGroup>
 
   <!-- FFmpeg (gyan.dev essentials build, GPL) encodes collision clips to H.264 MP4.
+       NOT committed to the repository (~98 MB): download it and place it at
+       src/ERCTelemetry.App/ffmpeg/ffmpeg.exe. See README.md "Voraussetzungen".
        Missing at runtime → clip recording is disabled with a settings warning. -->
   <ItemGroup>
-    <Content Include="ffmpeg\ffmpeg.exe" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="ffmpeg\ffmpeg.exe" CopyToOutputDirectory="PreserveNewest" Condition="Exists('ffmpeg\ffmpeg.exe')" />
   </ItemGroup>
 
   <!-- Delta-update apply script: ships in the install dir, the app copies it to

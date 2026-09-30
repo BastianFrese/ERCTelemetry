@@ -20,3 +20,7 @@ installer/shareserver-stage/
 
 # Werkzeug-Cache
 cache/
+
+# FFmpeg (~98 MB) wird NICHT eingecheckt — siehe README.md "Voraussetzungen".
+# Erwarteter Ablageort zur Build-/Laufzeit: src/ERCTelemetry.App/ffmpeg/ffmpeg.exe
+src/ERCTelemetry.App/ffmpeg/*.exe
