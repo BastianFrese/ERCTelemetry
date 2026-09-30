@@ -1,7 +1,8 @@
 # ERCTelemetry — Status & Remaining Work
 
 > Handoff document for future sessions. Read this first; read `docs/RELEASE.md` before any
-> publish. **No git repo** — this file (plus `UPDATELOG.md`) is the only history record.
+> publish. Seit 30.09.2026 liegt das Projekt in Git (github.com/BastianFrese/ERCTelemetry);
+> Commits ergänzen die Chronik, `docs/` und `UPDATELOG.md` bleiben der inhaltliche Stand.
 > **Nächste Ideen:** `docs/IDEAS.md` — Brainstorm/Roadmap für die Zeit nach Phase 6.
 > **Mobile App:** `docs/MOBILE.md` — Bauplan für den Mobile Companion (PC- + Konsolen-Spieler).
 > **Clip-Pipeline:** `docs/CLIPS-PIPELINE.md` — Arbeitsstand der neuen HDR/Audio/Disk-Video-Pipeline
